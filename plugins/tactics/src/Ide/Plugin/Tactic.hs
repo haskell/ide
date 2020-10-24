@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NumDecimals         #-}
 {-# LANGUAGE OverloadedStrings   #-}
@@ -7,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE ViewPatterns        #-}
 
 -- | A plugin that uses tactics to synthesize code
@@ -17,28 +19,35 @@ module Ide.Plugin.Tactic
   ) where
 
 import           Control.Arrow
+import           Control.DeepSeq (NFData)
 import           Control.Monad
+import           Control.Monad.Error.Class
 import           Control.Monad.Trans
 import           Control.Monad.Trans.Maybe
 import           Data.Aeson
+import           Data.Binary (Binary)
+import qualified Data.ByteString.Char8 as BS
 import           Data.Coerce
 import           Data.Generics.Aliases (mkQ)
 import           Data.Generics.Schemes (everything)
+import           Data.Hashable (Hashable)
 import           Data.List
 import qualified Data.Map as M
 import           Data.Maybe
 import           Data.Monoid
 import qualified Data.Set as S
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import           Data.Traversable
+import           Development.IDE (ShowDiagnostic(ShowDiag))
 import           Development.IDE.Core.PositionMapping
 import           Development.IDE.Core.RuleTypes
 import           Development.IDE.Core.Service (runAction)
-import           Development.IDE.Core.Shake (useWithStale, IdeState (..))
+import           Development.IDE.Core.Shake (GetModificationTime (..), defineEarlyCutoff, define, use, useWithStale, IdeState (..))
 import           Development.IDE.GHC.Compat
 import           Development.IDE.GHC.Error (realSrcSpanToRange)
 import           Development.IDE.Spans.LocalBindings (getDefiningBindings)
-import           Development.Shake (Action)
+import           Development.Shake (RuleResult, Rules, Action)
 import           DynFlags (xopt)
 import qualified FastString
 import           GHC.Generics (Generic)
@@ -48,6 +57,7 @@ import           Ide.Plugin.Tactic.Auto
 import           Ide.Plugin.Tactic.Context
 import           Ide.Plugin.Tactic.GHC
 import           Ide.Plugin.Tactic.Judgements
+import           Ide.Plugin.Tactic.Metaprogramming
 import           Ide.Plugin.Tactic.Range
 import           Ide.Plugin.Tactic.Tactics
 import           Ide.Plugin.Tactic.TestTypes
@@ -71,7 +81,51 @@ descriptor plId = (defaultPluginDescriptor plId)
               (tacticCmd $ commandTactic tc))
               [minBound .. maxBound]
     , pluginCodeActionProvider = Just codeActionProvider
+    , pluginRules = tacticRules
     }
+
+data GetMetaprogram = GetMetaprogram
+  deriving stock (Show, Generic, Eq, Ord)
+  deriving anyclass (Hashable, NFData, Binary)
+
+type instance RuleResult GetMetaprogram = Metaprogram
+
+data GetMetaprogramCache = GetMetaprogramCache
+  deriving stock (Show, Generic, Eq, Ord)
+  deriving anyclass (Hashable, NFData, Binary)
+
+type instance RuleResult GetMetaprogramCache = MetaprogramCache
+
+tacticRules :: Rules ()
+tacticRules = do
+  defineEarlyCutoff $ \GetMetaprogram nfp -> do
+    mtime <- use GetModificationTime nfp
+    contents <- liftIO $ T.readFile $ fromNormalizedFilePath nfp
+    pure
+      $ (Just $ BS.pack $ show mtime ,)
+      $ case parseMetaprogram (fromNormalizedFilePath nfp) contents of
+          Left err ->
+            ( [ (nfp
+                , ShowDiag
+                , Diagnostic
+                    (Range (Position 0 0)
+                           (Position 0 0))
+                    Nothing
+                    Nothing
+                    Nothing
+                    (T.pack err)
+                    Nothing
+                    Nothing
+                )
+              ]
+            , Nothing
+            )
+          Right mp -> ([], Just mp)
+  define $ \GetMetaprogramCache _ -> do
+    files <- liftIO getKnownFiles
+    mps <- fmap catMaybes $ traverse (use GetMetaprogram) files
+    pure ([], Just $ buildCache mps)
+
 
 tacticDesc :: T.Text -> T.Text
 tacticDesc name = "fill the hole using the " <> name <> " tactic"
@@ -79,7 +133,14 @@ tacticDesc name = "fill the hole using the " <> name <> " tactic"
 ------------------------------------------------------------------------------
 -- | A 'TacticProvider' is a way of giving context-sensitive actions to the LS
 -- UI.
-type TacticProvider = DynFlags -> PluginId -> Uri -> Range -> Judgement -> IO [CAResult]
+type TacticProvider
+    = DynFlags
+   -> MetaprogramCache
+   -> PluginId
+   -> Uri
+   -> Range
+   -> Judgement
+   -> IO [CAResult]
 
 
 ------------------------------------------------------------------------------
@@ -115,17 +176,23 @@ commandProvider HomomorphismLambdaCase =
   requireExtension LambdaCase $
     filterGoalType ((== Just True) . lambdaCaseable) $
       provide HomomorphismLambdaCase ""
+commandProvider RunMetaprogram =
+  allMetaprograms $ \mp ->
+    provide RunMetaprogram mp
 
 
 ------------------------------------------------------------------------------
 -- | A mapping from tactic commands to actual tactics for refinery.
-commandTactic :: TacticCommand -> OccName -> TacticsM ()
-commandTactic Auto         = const auto
-commandTactic Intros       = const intros
-commandTactic Destruct     = destruct
-commandTactic Homomorphism = homo
-commandTactic DestructLambdaCase     = const destructLambdaCase
-commandTactic HomomorphismLambdaCase = const homoLambdaCase
+commandTactic :: TacticCommand -> Maybe Metaprogram -> OccName -> TacticsM ()
+commandTactic Auto _ _                   = auto
+commandTactic Intros _ _                 = intros
+commandTactic Destruct _ occ             = destruct occ
+commandTactic Homomorphism _ occ         = homo occ
+commandTactic DestructLambdaCase _ _     = destructLambdaCase
+commandTactic HomomorphismLambdaCase _ _ = homoLambdaCase
+commandTactic RunMetaprogram (Just mp) _ = mp_program mp
+-- TODO(sandy): better error here
+commandTactic RunMetaprogram Nothing _   = throwError NoApplicableTactic
 
 
 ------------------------------------------------------------------------------
@@ -152,11 +219,12 @@ codeActionProvider :: CodeActionProvider
 codeActionProvider _conf state plId (TextDocumentIdentifier uri) range _ctx
   | Just nfp <- uriToNormalizedFilePath $ toNormalizedUri uri =
       fromMaybeT (Right $ List []) $ do
-        (_, jdg, _, dflags) <- judgementForHole state nfp range
+        (_, jdg, _, dflags, mpc) <- judgementForHole state nfp range
         actions <- lift $
           -- This foldMap is over the function monoid.
           foldMap commandProvider [minBound .. maxBound]
             dflags
+            mpc
             plId
             uri
             range
@@ -173,7 +241,7 @@ codeActions = List . fmap CACodeAction
 -- | Terminal constructor for providing context-sensitive tactics. Tactics
 -- given by 'provide' are always available.
 provide :: TacticCommand -> T.Text -> TacticProvider
-provide tc name _ plId uri range _ = do
+provide tc name _ _ plId uri range _ = do
   let title = tacticTitle tc name
       params = TacticParams { file = uri , range = range , var_name = name }
   cmd <- mkLspCommand plId (tcCommandId tc) title (Just [toJSON params])
@@ -188,9 +256,9 @@ provide tc name _ plId uri range _ = do
 -- | Restrict a 'TacticProvider', making sure it appears only when the given
 -- predicate holds for the goal.
 requireExtension :: Extension -> TacticProvider -> TacticProvider
-requireExtension ext tp dflags plId uri range jdg =
+requireExtension ext tp dflags mpc plId uri range jdg =
   case xopt ext dflags of
-    True  -> tp dflags plId uri range jdg
+    True  -> tp dflags mpc plId uri range jdg
     False -> pure []
 
 
@@ -198,9 +266,9 @@ requireExtension ext tp dflags plId uri range jdg =
 -- | Restrict a 'TacticProvider', making sure it appears only when the given
 -- predicate holds for the goal.
 filterGoalType :: (Type -> Bool) -> TacticProvider -> TacticProvider
-filterGoalType p tp dflags plId uri range jdg =
+filterGoalType p tp dflags mpc plId uri range jdg =
   case p $ unCType $ jGoal jdg of
-    True  -> tp dflags plId uri range jdg
+    True  -> tp dflags mpc plId uri range jdg
     False -> pure []
 
 
@@ -211,13 +279,19 @@ filterBindingType
     :: (Type -> Type -> Bool)  -- ^ Goal and then binding types.
     -> (OccName -> Type -> TacticProvider)
     -> TacticProvider
-filterBindingType p tp dflags plId uri range jdg =
+filterBindingType p tp dflags mpc plId uri range jdg =
   let hy = jHypothesis jdg
       g  = jGoal jdg
    in fmap join $ for (M.toList hy) $ \(occ, CType ty) ->
         case p (unCType g) ty of
-          True  -> tp occ ty dflags plId uri range jdg
+          True  -> tp occ ty dflags mpc plId uri range jdg
           False -> pure []
+
+allMetaprograms
+    :: (T.Text -> TacticProvider)
+    -> TacticProvider
+allMetaprograms f dflags mpc@(MetaprogramCache cache) plId uri range jdg =
+  fmap join $ for (M.keys cache) $ \key -> f key dflags mpc plId uri range jdg
 
 
 data TacticParams = TacticParams
@@ -235,7 +309,7 @@ judgementForHole
     :: IdeState
     -> NormalizedFilePath
     -> Range
-    -> MaybeT IO (Range, Judgement, Context, DynFlags)
+    -> MaybeT IO (Range, Judgement, Context, DynFlags, MetaprogramCache)
 judgementForHole state nfp range = do
   (asts, amapping) <- MaybeT $ runIde state $ useWithStale GetHieAst nfp
   range' <- liftMaybe $ fromCurrentRange amapping range
@@ -258,9 +332,11 @@ judgementForHole state nfp range = do
 
   resulting_range <- liftMaybe $ toCurrentRange amapping $ realSrcSpanToRange rss
   (tcmod, _) <- MaybeT $ runIde state $ useWithStale TypeCheck nfp
+  mpc <- MaybeT $ runIde state $ use GetMetaprogramCache nfp
   let tcg = fst $ tm_internals_ $ tmrModule tcmod
       tcs = tm_typechecked_source $ tmrModule tcmod
       ctx = mkContext
+              mpc
               (mapMaybe (sequenceA . (occName *** coerce))
                 $ getDefiningBindings binds rss)
               tcg
@@ -276,20 +352,24 @@ judgementForHole state nfp range = do
            goal
        , ctx
        , dflags
+       , mpc
        )
 
 
 
-tacticCmd :: (OccName -> TacticsM ()) -> CommandFunction TacticParams
+tacticCmd :: (Maybe Metaprogram -> OccName -> TacticsM ()) -> CommandFunction TacticParams
+-- TODO(sandy): This is gross; it is reusing var_name as a metaprogram name as well
 tacticCmd tac lf state (TacticParams uri range var_name)
   | Just nfp <- uriToNormalizedFilePath $ toNormalizedUri uri =
       fromMaybeT (Right Null, Nothing) $ do
-        (range', jdg, ctx, dflags) <- judgementForHole state nfp range
+        (range', jdg, ctx, dflags, mpc) <- judgementForHole state nfp range
         let span = rangeToRealSrcSpan (fromNormalizedFilePath nfp) range'
-        pm <- MaybeT $ useAnnotatedSource "tacticsCmd" state nfp
+        pm  <- MaybeT $ useAnnotatedSource "tacticsCmd" state nfp
+        let mp = M.lookup var_name $ unMetaprogramCache mpc
+
         x <- lift $ timeout 2e8 $
           case runTactic ctx jdg
-                $ tac
+                $ tac mp
                 $ mkVarOcc
                 $ T.unpack var_name of
             Left err ->

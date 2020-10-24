@@ -40,7 +40,7 @@ spec = describe "auto for tuple" $ do
       pure $
           -- We should always be able to find a solution
           runTactic
-            (Context [] [])
+            emptyContext
             (mkFirstJudgement
               (M.singleton (mkVarOcc "x") $ CType in_type)
               True

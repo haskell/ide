@@ -15,6 +15,7 @@ data TacticCommand
   | Homomorphism
   | DestructLambdaCase
   | HomomorphismLambdaCase
+  | RunMetaprogram
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 -- | Generate a title for the command.
@@ -25,3 +26,5 @@ tacticTitle Destruct var = "Case split on " <> var
 tacticTitle Homomorphism var = "Homomorphic case split on " <> var
 tacticTitle DestructLambdaCase _ = "Lambda case split"
 tacticTitle HomomorphismLambdaCase _ = "Homomorphic lambda case split"
+tacticTitle RunMetaprogram mp = "Run metaprogram: " <> mp
+

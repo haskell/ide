@@ -39,6 +39,7 @@ import           Name (nameOccName, occNameString)
 import           Refinery.Tactic
 import           Refinery.Tactic.Internal
 import           TcType
+import           TyCoRep (Type(..))
 import           Type hiding (Var)
 
 
@@ -66,7 +67,6 @@ assume name = rule $ \jdg -> do
     Nothing -> throwError $ UndefinedHypothesis name
 
 
-
 recursion :: TacticsM ()
 recursion = tracing "recursion" $ do
   defs <- getCurrentDefinitions
@@ -75,6 +75,30 @@ recursion = tracing "recursion" $ do
     ensure recursiveCleanup (withRecursionStack tail) $ do
       (localTactic (apply' (const id) name) $ introducing defs)
         <@> fmap (localTactic assumption . filterPosition name) [0..]
+
+
+------------------------------------------------------------------------------
+-- | Introduce a lambda binding using the specified name.
+intro :: OccName -> TacticsM ()
+intro name = rule $ \jdg -> do
+  let g  = jGoal jdg
+  ctx <- ask
+  case tacticsSplitFunTy $ unCType g of
+    ([], [], (a : as), res) -> do
+      let b = mkVisFunTys as res
+      let jdg' = introducing [(name, coerce a)]
+               $ withNewGoal (CType b) jdg
+      modify $ withIntroducedVals $ mappend $ S.singleton name
+      (tr, sg)
+        <- newSubgoal
+          -- TODO(sandy): Position mapping doesn't work for a single intro
+          $ jdg'
+      pure
+          . (rose ("intro {" <> show name <> "}") $ pure tr, )
+          . noLoc
+          . lambda [bvar' name]
+          $ unLoc sg
+    _ -> throwError $ GoalMismatch "intro" g
 
 
 ------------------------------------------------------------------------------

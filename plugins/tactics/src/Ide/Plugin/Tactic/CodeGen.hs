@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections    #-}
 {-# LANGUAGE ViewPatterns     #-}
@@ -189,7 +190,6 @@ mkCon dcon (fmap unLoc -> args)
 
 coerceName :: HasOccName a => a -> RdrNameStr
 coerceName = fromString . occNameString . occName
-
 
 
 ------------------------------------------------------------------------------

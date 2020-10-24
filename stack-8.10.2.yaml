@@ -18,6 +18,7 @@ extra-deps:
 - data-tree-print-0.1.0.2
 - floskell-0.10.4
 - fourmolu-0.2.0.0
+- megaparsec-9.0.0
 - monad-dijkstra-0.1.1.2
 - opentelemetry-0.4.2
 - refinery-0.3.0.0

@@ -12,14 +12,17 @@ import OccName
 import TcRnTypes
 
 
-mkContext :: [(OccName, CType)] -> TcGblEnv -> Context
-mkContext locals
-  = Context locals
-  . fmap splitId
-  . (getFunBindId =<<)
-  . fmap unLoc
-  . bagToList
-  . tcg_binds
+mkContext :: MetaprogramCache -> [(OccName, CType)] -> TcGblEnv -> Context
+mkContext mpc locals tcg_env = Context
+  { ctxDefiningFuncs = locals
+  , ctxMetaprogramCache = mpc
+  , ctxModuleFuncs
+      = fmap splitId
+      . (getFunBindId =<<)
+      . fmap unLoc
+      . bagToList
+      $ tcg_binds tcg_env
+  }
 
 
 splitId :: Id -> (OccName, CType)
@@ -35,8 +38,13 @@ getFunBindId _ = []
 
 
 getCurrentDefinitions :: MonadReader Context m => m [(OccName, CType)]
-getCurrentDefinitions = asks $ ctxDefiningFuncs
+getCurrentDefinitions = asks ctxDefiningFuncs
+
 
 getModuleHypothesis :: MonadReader Context m => m [(OccName, CType)]
 getModuleHypothesis = asks ctxModuleFuncs
+
+
+getMetaprogramCache :: MonadReader Context m => m MetaprogramCache
+getMetaprogramCache = asks ctxMetaprogramCache
 

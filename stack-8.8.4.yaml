@@ -30,6 +30,7 @@ extra-deps:
 - hsimport-0.11.0
 - ilist-0.3.1.0
 - lsp-test-0.11.0.5
+- megaparsec-9.0.0
 - monad-dijkstra-0.1.1.2
 - refinery-0.3.0.0
 - retrie-0.1.1.1

@@ -39,6 +39,7 @@ extra-deps:
 - indexed-profunctors-0.1
 - lens-4.18
 - lsp-test-0.11.0.5
+- megaparsec-9.0.0
 - monad-dijkstra-0.1.1.2
 - opentelemetry-0.4.2
 - optics-core-0.2

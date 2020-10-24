@@ -1,11 +1,14 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeSynonymInstances       #-}
 {-# OPTIONS_GHC -fno-warn-orphans       #-}
 
@@ -20,21 +23,24 @@ module Ide.Plugin.Tactic.Types
   , Range
   ) where
 
-import Control.Lens hiding (Context)
-import Data.Generics.Product (field)
-import Control.Monad.Reader
-import Data.Function
-import Data.Map (Map)
-import Data.Set (Set)
-import Development.IDE.GHC.Compat hiding (Node)
-import Development.IDE.Types.Location
-import GHC.Generics
-import Ide.Plugin.Tactic.Debug
-import OccName
-import Refinery.Tactic
-import Type
-import Data.Tree
-import Data.Coerce
+import           Control.DeepSeq
+import           Control.Lens hiding (Context)
+import           Control.Monad.Reader
+import           Data.Coerce
+import           Data.Function
+import           Data.Generics.Product (field)
+import           Data.Map (Map)
+import           Data.Set (Set)
+import           Data.Text (Text)
+import qualified Data.Text as T
+import           Data.Tree
+import           Development.IDE.GHC.Compat hiding (Node)
+import           Development.IDE.Types.Location
+import           GHC.Generics
+import           Ide.Plugin.Tactic.Debug
+import           OccName
+import           Refinery.Tactic
+import           Type
 
 
 ------------------------------------------------------------------------------
@@ -119,7 +125,7 @@ type Judgement = Judgement' CType
 
 
 newtype ExtractM a = ExtractM { unExtractM :: Reader Context a }
-    deriving (Functor, Applicative, Monad, MonadReader Context)
+  deriving newtype (Functor, Applicative, Monad, MonadReader Context)
 
 ------------------------------------------------------------------------------
 -- | Orphan instance for producing holes when attempting to solve tactics.
@@ -190,12 +196,16 @@ type Trace = Rose String
 ------------------------------------------------------------------------------
 -- | The Reader context of tactics and rules
 data Context = Context
-  { ctxDefiningFuncs :: [(OccName, CType)]
+  { ctxDefiningFuncs :: ![(OccName, CType)]
     -- ^ The functions currently being defined
-  , ctxModuleFuncs :: [(OccName, CType)]
+  , ctxModuleFuncs :: ![(OccName, CType)]
     -- ^ Everything defined in the current module
+  , ctxMetaprogramCache :: !MetaprogramCache
   }
-  deriving stock (Eq, Ord)
+
+
+emptyContext :: Context
+emptyContext = Context mempty mempty mempty
 
 
 newtype Rose a = Rose (Tree a)
@@ -221,6 +231,32 @@ rose a rs = Rose $ Node a $ coerce rs
 
 
 ------------------------------------------------------------------------------
+data Metaprogram = Metaprogram
+  { mp_name             :: !Text
+  , mp_known_by_auto    :: !Bool
+  , mp_show_code_action :: !Bool
+  , mp_program          :: !(TacticsM ())
+  }
+  deriving stock Generic
+
+emptyMetaprogram :: Metaprogram
+emptyMetaprogram = Metaprogram "" False False (pure ())
+
+instance NFData Metaprogram where
+  rnf (!(Metaprogram !_ !_ !_ !_)) = ()
+
+
+instance Show Metaprogram where
+  show = T.unpack . mp_name
+
+
+newtype MetaprogramCache = MetaprogramCache
+  { unMetaprogramCache :: Map Text Metaprogram
+  }
+  deriving stock (Show, Generic)
+  deriving newtype (Semigroup, Monoid)
+  deriving anyclass (NFData)
+
 -- | The results of 'Ide.Plugin.Tactic.Machinery.runTactic'
 data RunTacticResults = RunTacticResults
   { rtr_trace       :: Trace

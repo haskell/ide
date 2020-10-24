@@ -39,7 +39,9 @@ library
     Ide.Plugin.Tactic.Judgements
     Ide.Plugin.Tactic.KnownStrategies
     Ide.Plugin.Tactic.Machinery
+    Ide.Plugin.Tactic.Metaprogramming
     Ide.Plugin.Tactic.Naming
+    Ide.Plugin.Tactic.Parser
     Ide.Plugin.Tactic.Range
     Ide.Plugin.Tactic.Tactics
     Ide.Plugin.Tactic.Types
@@ -54,7 +56,10 @@ library
   build-depends:
     , aeson
     , base           >=4.12 && <5
+    , binary
+    , bytestring
     , containers
+    , deepseq
     , directory
     , extra
     , filepath
@@ -65,10 +70,13 @@ library
     , ghc-exactprint
     , ghc-source-gen
     , ghcide         >=0.1
+    , hashable
     , haskell-lsp    ^>=0.22
     , hls-plugin-api
     , lens
+    , megaparsec     ^>=9
     , mtl
+    , parser-combinators
     , refinery       ^>=0.3
     , retrie         >=0.1.1.0
     , shake          >=0.17.5

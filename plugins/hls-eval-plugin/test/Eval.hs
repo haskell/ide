@@ -80,79 +80,94 @@ tests =
                 doc <- openDoc "T2.hs" "haskell"
                 lenses <- getEvalCodeLenses doc
                 liftIO $ map _range lenses @?= [Range (Position 4 0) (Position 5 0)]
-        , testCase "Evaluation of expressions" $ goldenTest "T1.hs"
-        , testCase "Reevaluation of expressions" $ goldenTest "T2.hs"
-        , testCase "Evaluation of expressions w/ imports" $ goldenTest "T3.hs"
-        , testCase "Evaluation of expressions w/ lets" $ goldenTest "T4.hs"
-        , testCase "Refresh an evaluation" $ goldenTest "T5.hs"
-        , testCase "Refresh an evaluation w/ lets" $ goldenTest "T6.hs"
-        , testCase "Refresh a multiline evaluation" $ goldenTest "T7.hs"
-        , testCase "Semantic and Lexical errors are reported" $ goldenTest "T8.hs"
-        , testCase "Applies file LANGUAGE extensions" $ goldenTest "T9.hs"
-        , testCase "Evaluate a type with :kind!" $ goldenTest "T10.hs"
-        , testCase "Reports an error for an incorrect type with :kind!" $
-            goldenTest "T11.hs"
-        , testCase "Shows a kind with :kind" $ goldenTest "T12.hs"
-        , testCase "Reports an error for an incorrect type with :kind" $
-            goldenTest "T13.hs"
-        , testCase "Returns a fully-instantiated type for :type" $
-            goldenTest "T14.hs"
-        , testCase "Returns an uninstantiated type for :type +v, admitting multiple whitespaces around arguments" $
-            goldenTest "T15.hs"
-        , testCase "Returns defaulted type for :type +d, admitting multiple whitespaces around arguments" $
-            goldenTest "T16.hs"
-        , testCase ":type reports an error when given with unknown +x option" $
-            goldenTest "T17.hs"
-        , testCase "Reports an error when given with unknown command" $
-            goldenTest "T18.hs"
-        , testCase "Returns defaulted type for :type +d reflecting the default declaration specified in the >>> prompt" $
-            goldenTest "T19.hs"
-        , expectFailBecause "known issue - see a note in P.R. #361" $
-            testCase ":type +d reflects the `default' declaration of the module" $
-                goldenTest "T20.hs"
-        , testCase ":type handles a multilined result properly" $
-            goldenTest "T21.hs"
-        , testCase ":t behaves exactly the same as :type" $
-            goldenTest "T22.hs"
-        , testCase ":type does \"dovetails\" for short identifiers" $
-            goldenTest "T23.hs"
-        , testCase ":kind! treats a multilined result properly" $
-            goldenTest "T24.hs"
-        , testCase ":kind treats a multilined result properly" $
-            goldenTest "T25.hs"
-        , testCase "local imports" $
-            goldenTest "T26.hs"
-        , testCase "Preserves one empty comment line after prompt" $
-            goldenTest "T27.hs"
-        , testCase
+        , gtest "Evaluation of expressions" "T1"
+        , gtest "Reevaluation of expressions" "T2"
+        , gtest "Evaluation of expressions w/ imports" "T3"
+        , gtest "Evaluation of expressions w/ lets" "T4"
+        , gtest "Refresh an evaluation" "T5"
+        , gtest "Refresh an evaluation w/ lets" "T6"
+        , gtest "Refresh a multiline evaluation" "T7"
+        , gtest "Semantic and Lexical errors are reported" "T8"
+        , gtest "Applies file LANGUAGE extensions" "T9"
+        , gtest "Evaluate a type with :kind!" "T10"
+        , gtest
+            "Reports an error for an incorrect type with :kind!"
+            "T11"
+        , gtest "Shows a kind with :kind" "T12"
+        , gtest
+            "Reports an error for an incorrect type with :kind"
+            "T13"
+        , gtest
+            "Returns a fully-instantiated type for :type"
+            "T14"
+        , gtest
+            "Returns an uninstantiated type for :type +v, admitting multiple whitespaces around arguments"
+            "T15"
+        , gtest
+            "Returns defaulted type for :type +d, admitting multiple whitespaces around arguments"
+            "T16"
+        , gtest
+            ":type reports an error when given with unknown +x option"
+            "T17"
+        , gtest
+            "Reports an error when given with unknown command"
+            "T18"
+        , gtest
+            "Returns defaulted type for :type +d reflecting the default declaration specified in the >>> prompt"
+            "T19"
+        , expectFailBecause
+            "known issue - see a note in P.R. #361"
+            $ gtest
+                ":type +d reflects the `default' declaration of the module"
+                "T20"
+        , gtest
+            ":type handles a multilined result properly"
+            "T21"
+        , gtest
+            ":t behaves exactly the same as :type"
+            "T22"
+        , gtest ":type does \"dovetails\" for short identifiers" "T23"
+        , gtest ":kind! treats a multilined result properly" "T24"
+        , gtest ":kind treats a multilined result properly" "T25"
+        , gtest "local imports" "T26"
+        , gtest
+            "Preserves one empty comment line after prompt"
+            "T27"
+        , gtest
             "Multi line comments"
-            $ goldenTest "TMulti.hs"
-        , testCase
+            "TMulti"
+        , gtest
             "Evaluate expressions in Plain comments in both single line and multi line format"
-            $ goldenTest "TPlainComment.hs"
-        , testCase
+            "TPlainComment"
+        , gtest
             "Evaluate expressions in Haddock comments in both single line and multi line format"
-            $ goldenTest "THaddock.hs"
-        , testCase "Compare results (for Haddock tests only)" $
-            goldenTest "TCompare.hs"
-        , testCase "Local Modules imports are accessible in a test" $
-            goldenTest "TLocalImport.hs"
-        , -- , testCase "Local Modules can be imported in a test" $ goldenTest "TLocalImportInTest.hs"
-          ignoreTestBecause "Unexplained but minor issue" $
-            testCase "Setting language option TupleSections" $
-                goldenTest "TLanguageOptionsTupleSections.hs"
-        , testCase "IO expressions are supported, stdout/stderr output is ignored" $
-            goldenTest "TIO.hs"
-        , testCase "Property checking" $ goldenTest "TProperty.hs"
-        , testCase
+            "THaddock"
+        , gtest "Compare results (for Haddock tests only)" "TCompare"
+        , gtest "Local Modules imports are accessible in a test" "TLocalImport"
+        , gtest "Local Modules can be imported in a test" "TLocalImportInTest"
+        , gtest
+            "Setting language options"
+            "TLanguageOptions"
+        , ignoreTestBecause
+            "Unexplained but minor issue"
+            $ gtest
+                "Setting language option TupleSections"
+                "TLanguageOptionsTupleSections"
+        , gtest "IO expressions are supported, stdout/stderr output is ignored" "TIO"
+        , gtest "Property checking" "TProperty"
+        , gtest
             "Prelude has no special treatment, it is imported as stated in the module"
-            $ goldenTest "TPrelude.hs"
+            "TPrelude"
+        , gtest "Lenses" "TLens"
 #if __GLASGOW_HASKELL__ >= 808
-            , testCase "CPP support" $ goldenTest "TCPP.hs"
-            , testCase "Literate Haskell Bird Style" $ goldenTest "TLHS.lhs"
+            , gtest "CPP support" "TCPP"
+            , gtest_ ".lhs" "Literate Haskell Bird Style" "TLHS"
 #endif
-            -- , testCase "Literate Haskell LaTeX Style" $ goldenTest "TLHSLateX.lhs"
+        -- , gtest "Literate Haskell LaTeX Style"  "TLHSLateX.lhs"
         ]
+  where
+    gtest = gtest_ ".hs"
+    gtest_ ext name file = testCase name $ goldenTest (file ++ ext)
 
 goldenTest :: FilePath -> IO ()
 goldenTest = goldenTestBy isEvalTest

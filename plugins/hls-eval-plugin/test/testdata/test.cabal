@@ -52,7 +52,7 @@ library
       TLHS
       Util
 
-  build-depends:       base >= 4.7 && < 5, QuickCheck
+  build-depends:       base >= 4.7 && < 5, QuickCheck, optics
   default-language:    Haskell2010
   ghc-options:         -Wall -fwarn-unused-imports
 

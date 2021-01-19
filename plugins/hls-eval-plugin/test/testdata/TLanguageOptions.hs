@@ -1,6 +1,6 @@
 -- Support for language options
-
 {-# LANGUAGE ScopedTypeVariables #-}
+
 module TLanguageOptions where
 
 -- Language options set in the module source (ScopedTypeVariables)
@@ -19,7 +19,6 @@ Options apply only in the section where they are defined (unless they are in the
 
 >>> class L a b c
 -}
-
 
 {-
 Options apply to all tests in the same section after their declaration.
@@ -41,3 +40,6 @@ It still works
 {- Wrong option names are reported.
 >>> :set -XWrong
 -}
+
+-- >>> :set -XQuasiQuotes
+-- >>> [e||]

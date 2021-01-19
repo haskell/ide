@@ -27,7 +27,7 @@ double = (2*)
 
 # Demo
 
-![Eval](demo.gif)
+![Eval Demo](https://raw.githubusercontent.com/haskell/haskell-language-server/master/plugins/hls-eval-plugin/demo.gif)
 
 # Test Structure
 

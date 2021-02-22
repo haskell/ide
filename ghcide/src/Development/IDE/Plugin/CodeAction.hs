@@ -63,11 +63,12 @@ import Control.Lens (alaf)
 import Data.Monoid (Ap(..))
 import TcRnTypes (TcGblEnv(..), ImportAvails(..))
 import HscTypes (ImportedModsVal(..), importedByUser)
-import RdrName (GlobalRdrElt(..), lookupGlobalRdrEnv)
+import RdrName (GlobalRdrElt(..), lookupGlobalRdrEnv, mkVarUnqual)
 import SrcLoc (realSrcSpanStart)
 import Module (moduleEnvElts)
 import qualified Data.Map as M
 import qualified Data.Set as S
+import Data.Generics (Data, something, mkQ, everywhere, mkT)
 
 descriptor :: PluginId -> PluginDescriptor IdeState
 descriptor plId =
@@ -153,6 +154,7 @@ suggestAction packageExports ideOptions parsedModule text df annSource tcM har d
     , rewrite df annSource $ \df ps -> suggestConstraint df ps diag
     , rewrite df annSource $ \_ ps -> suggestImplicitParameter ps diag
     , rewrite df annSource $ \_ ps -> suggestHideShadow ps tcM har diag
+    , rewrite df annSource $ \_ ps -> suggestRenameShadow ps tcM har diag
     ] ++ concat
     [  suggestNewDefinition ideOptions pm text diag
     ++ suggestNewImport packageExports pm diag
@@ -256,6 +258,43 @@ isUnusedImportedId
       refs <- M.lookup importedIdentifier refMap =
       maybe True (not . any (\(_, IdentifierDetails {..}) -> identInfo == S.singleton Use)) refs
     | otherwise = False
+
+suggestRenameShadow :: ParsedSource -> Maybe TcModuleResult -> Maybe HieAstResult -> Diagnostic -> [(T.Text, [Rewrite])]
+suggestRenameShadow (L _ HsModule {hsmodDecls}) mTcM mHar Diagnostic {_message, _range}
+  | not $ T.isInfixOf "import" _message,
+    Just [identifier] <-
+      matchRegexUnifySpaces
+        _message
+        "This binding for ‘([^`]+)’ shadows the existing binding",
+    Range p@(Position (succ -> line) (succ -> col)) _ <- _range,
+    Just TcModuleResult {tmrRenamed = (hsGroup, _, _, _)} <- mTcM,
+    Just HAR {refMap} <- mHar,
+    Just name <- getIdByLoc (line, col) hsGroup,
+    Just refSpans <- fmap fst <$> M.lookup (Right name) refMap,
+    Just decl <- findDeclContainingLoc p hsmodDecls =
+    [("Rename " <> identifier, pure $ Rewrite (getLoc decl) $ \_ -> pure $ renameRdr (mkVarUnqual "NEW_NAME") refSpans decl)]
+  | otherwise = []
+
+getIdByLoc :: (Data (f pass), Data (IdP pass)) => (Int, Int) -> f pass -> Maybe (IdP pass)
+getIdByLoc (line, col) = something (mkQ Nothing f)
+  where
+    f :: Located a -> Maybe a
+    f (L l name)
+      | RealSrcSpan s <- l,
+        srcSpanStartLine s == line,
+        srcSpanStartCol s == col =
+        Just name
+      | otherwise = Nothing
+
+renameRdr :: RdrName -> [Span] -> LHsDecl GhcPs -> LHsDecl GhcPs
+renameRdr newName targets = everywhere (mkT f)
+  where
+    f :: Located RdrName -> Located RdrName
+    f x@(L l _)
+      | RealSrcSpan s <- l,
+        s `elem` targets =
+        L l newName
+      | otherwise = x
 
 suggestDisableWarning :: ParsedModule -> Maybe T.Text -> Diagnostic -> [(T.Text, [TextEdit])]
 suggestDisableWarning pm contents Diagnostic{..}

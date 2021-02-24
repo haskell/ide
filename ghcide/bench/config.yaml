@@ -28,8 +28,6 @@ examples:
     modules:
         - hls-plugin-api/src/Ide/Plugin/Config.hs
         - ghcide/src/Development/IDE/Plugin/CodeAction/ExactPrint.hs
-        - ghcide/bench/hist/Main.hs
-        - ghcide/bench/lib/Experiments/Types.hs
         - ghcide/test/exe/Main.hs
         - exe/Plugins.hs
 

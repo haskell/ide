@@ -56,6 +56,8 @@ import System.Console.GetOpt
 import Data.Maybe
 import Control.Monad.Extra
 import System.FilePath
+import System.Directory as IO
+import System.IO.Extra
 
 
 configPath :: FilePath
@@ -138,20 +140,32 @@ type instance RuleResult GetSamples = Natural
 
 --------------------------------------------------------------------------------
 
-buildGhcide :: BuildSystem -> [CmdOption] -> FilePath -> Action ()
-buildGhcide Cabal args out = do
-    command_ args "cabal"
+buildGhcide
+    :: BuildSystem
+    -> Maybe FilePath  -- ^ working directory
+    -> FilePath  -- ^ output folder
+    -> Action ()
+buildGhcide Cabal cwd out = do
+    let cabalLocal = fromMaybe ".." cwd </> "cabal.project.local"
+    previousValue <- liftIO $ do
+        itExisted <- IO.doesFileExist cabalLocal
+        whenMaybe itExisted $ System.IO.Extra.readFile' cabalLocal
+    liftIO $ writeFile cabalLocal $ unlines
+      [ "package ghcide"
+      , "  ghc-options: -eventlog -rtsopts"]
+    command_ (maybe [] (pure . Cwd) cwd) "cabal"
         ["install"
         ,"exe:ghcide"
         ,"--installdir=" ++ out
         ,"--install-method=copy"
         ,"--overwrite-policy=always"
-        ,"--ghc-options=-rtsopts"
-        ,"--ghc-options=-eventlog"
         ]
+        `actionFinally` do
+            liftIO $ removeFile cabalLocal
+            liftIO $ whenJust previousValue $ writeFile cabalLocal
 
-buildGhcide Stack args out =
-    command_ args "stack"
+buildGhcide Stack cwd out =
+    command_ (maybe [] (pure . Cwd) cwd) "stack"
         ["--local-bin-path=" <> out
         ,"build"
         ,"ghcide:ghcide"
@@ -181,7 +195,8 @@ benchGhcide samples buildSystem args BenchProject{..} = do
 warmupGhcide :: BuildSystem -> FilePath -> [CmdOption] -> Example -> Action ()
 warmupGhcide buildSystem exePath args example = do
   command args "ghcide-bench" $
-    [ "--no-clean",
+    [ "--timeout=300",
+      "--no-clean",
       "-v",
       "--samples=1",
       "--ghcide=" <> exePath,

@@ -171,17 +171,18 @@ phonyRules prefix executableName prof buildFolder examples = do
     phony (prefix <> "all-binaries") $ need =<< allBinaries buildFolder executableName
 --------------------------------------------------------------------------------
 type OutputFolder = FilePath
+type CWD = FilePath
 
 data MkBuildRules buildSystem = MkBuildRules
   { -- | Return the path to the GHC executable to use for the project found in the cwd
-    findGhc            :: buildSystem -> FilePath -> IO FilePath
+    findGhc            :: buildSystem -> Maybe CWD -> IO FilePath
     -- | Name of the binary produced by 'buildProject'
   , executableName     :: String
     -- | An action that captures the source dependencies, used for the HEAD build
   , projectDepends     :: Action ()
     -- | Build the project found in the cwd and save the build artifacts in the output folder
   , buildProject       :: buildSystem
-                       -> [CmdOption]
+                       -> Maybe CWD
                        -> OutputFolder
                        -> Action ()
   }
@@ -209,8 +210,8 @@ buildRules build MkBuildRules{..} = do
       projectDepends
       liftIO $ createDirectoryIfMissing True $ dropFileName out
       buildSystem <- askOracle $ GetBuildSystem ()
-      buildProject buildSystem [Cwd "."] (takeDirectory out)
-      ghcLoc <- liftIO $ findGhc buildSystem "."
+      buildProject buildSystem Nothing (takeDirectory out)
+      ghcLoc <- liftIO $ findGhc buildSystem Nothing
       writeFile' ghcpath ghcLoc
 
   -- build rules for non HEAD revisions
@@ -223,8 +224,8 @@ buildRules build MkBuildRules{..} = do
       cmd_ $ "git worktree add bench-temp-" ++ ver ++ " " ++ commitid
       buildSystem <- askOracle $ GetBuildSystem ()
       flip actionFinally (cmd_ ("git worktree remove bench-temp-" <> ver <> " --force" :: String)) $ do
-        ghcLoc <- liftIO $ findGhc buildSystem ver
-        buildProject buildSystem [Cwd $ "bench-temp-" <> ver] (".." </> takeDirectory out)
+        ghcLoc <- liftIO $ findGhc buildSystem (Just ver)
+        buildProject buildSystem (Just $ "bench-temp-" <> ver) (".." </> takeDirectory out)
         writeFile' ghcPath ghcLoc
 
 --------------------------------------------------------------------------------
@@ -461,11 +462,11 @@ data BuildSystem = Cabal | Stack
   deriving (Eq, Read, Show, Generic)
   deriving (Binary, Hashable, NFData)
 
-findGhcForBuildSystem :: BuildSystem -> FilePath -> IO FilePath
+findGhcForBuildSystem :: BuildSystem -> Maybe FilePath -> IO FilePath
 findGhcForBuildSystem Cabal _cwd =
     liftIO $ fromMaybe (error "ghc is not in the PATH") <$> findExecutable "ghc"
 findGhcForBuildSystem Stack cwd = do
-    Stdout ghcLoc <- cmd [Cwd cwd] ("stack exec which ghc" :: String)
+    Stdout ghcLoc <- cmd (maybe [] (pure . Cwd) cwd) ("stack exec which ghc" :: String)
     return ghcLoc
 
 instance FromJSON BuildSystem where

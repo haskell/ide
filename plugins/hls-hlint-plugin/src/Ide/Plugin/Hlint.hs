@@ -38,11 +38,11 @@ import Development.IDE.Core.Shake (getDiagnostics)
 
 #ifdef HLINT_ON_GHC_LIB
 import Data.List (nub)
-import "ghc-lib" GHC hiding (DynFlags(..), ms_hspp_opts)
+import "ghc-lib" GHC hiding (DynFlags(..), ms_hspp_opts, pm_mod_summary, ms_hspp_file, ms_hspp_buf)
 import "ghc-lib-parser" GHC.LanguageExtensions (Extension)
-import "ghc" DynFlags as RealGHC.DynFlags (topDir)
-import "ghc" GHC as RealGHC (DynFlags(..))
-import "ghc" HscTypes as RealGHC.HscTypes (hsc_dflags, ms_hspp_opts)
+import Development.IDE.GHC.Compat (DynFlags(..), topDir, ms_hspp_opts, pm_mod_summary, ms_hspp_file, ms_hspp_buf)
+import Development.IDE.GHC.Util (stringBufferToString)
+import "ghc" HscTypes as RealGHC.HscTypes (hsc_dflags)
 import qualified "ghc" EnumSet as EnumSet
 import Language.Haskell.GhclibParserEx.GHC.Driver.Session as GhclibParserEx (readExtension)
 import System.Environment(setEnv, unsetEnv)
@@ -197,14 +197,24 @@ getIdeas nfp = do
         moduleEx flags = do
           mbpm <- getParsedModule nfp
           -- If ghc was not able to parse the module, we disable hlint diagnostics
-          if isNothing mbpm
-              then return Nothing
-              else do
-                     flags' <- setExtensions flags
-                     (_, contents) <- getFileContents nfp
-                     let fp = fromNormalizedFilePath nfp
-                     let contents' = T.unpack <$> contents
-                     Just <$> (liftIO $ parseModuleEx flags' fp contents')
+          case mbpm of
+            Nothing -> return Nothing
+            Just pm -> do
+                flags' <- setExtensions flags
+                let hspp@(fp, contents) = getHsppPathAndContents pm
+                (fp', contents') <- case contents of
+                                      Just c -> return hspp
+                                      Nothing -> getPathAndContents
+                Just <$> (liftIO $ parseModuleEx flags' fp' contents')
+
+        getHsppPathAndContents m =
+            (ms_hspp_file modsum, stringBufferToString <$> ms_hspp_buf modsum)
+          where modsum = pm_mod_summary m
+
+        getPathAndContents = do
+            (_, contents) <- getFileContents nfp
+            let fp = fromNormalizedFilePath nfp
+            return (fp, T.unpack <$> contents)
 
         setExtensions flags = do
           hlintExts <- getExtensions flags nfp

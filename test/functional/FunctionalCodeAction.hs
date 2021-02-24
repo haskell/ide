@@ -119,13 +119,11 @@ hlintTests = testGroup "hlint suggestions" [
         changeDoc doc [change']
         testHlintDiagnostics doc
 
-    , knownBrokenForGhcVersions [GHC88, GHC86] "hlint doesn't take in account cpp flag as ghc -D argument" $
-      testCase "hlint diagnostics works with CPP via ghc -XCPP argument (#554)" $ runHlintSession "cpp" $ do
+    , testCase "hlint diagnostics works with CPP via ghc -XCPP argument (#554)" $ runHlintSession "cpp" $ do
         doc <- openDoc "ApplyRefact3.hs" "haskell"
         testHlintDiagnostics doc
 
-    , knownBrokenForGhcVersions [GHC88, GHC86] "hlint doesn't take in account cpp flag as ghc -D argument" $
-      testCase "hlint diagnostics works with CPP via language pragma (#554)" $ runHlintSession "" $ do
+    , testCase "hlint diagnostics works with CPP via language pragma (#554)" $ runHlintSession "" $ do
         doc <- openDoc "ApplyRefact3.hs" "haskell"
         testHlintDiagnostics doc
 

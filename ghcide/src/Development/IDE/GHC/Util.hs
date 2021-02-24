@@ -16,6 +16,7 @@ module Development.IDE.GHC.Util(
     textToStringBuffer,
     bytestringToStringBuffer,
     stringBufferToByteString,
+    stringBufferToString,
     moduleImportPath,
     cgGutsToCoreModule,
     fingerprintToBS,
@@ -109,6 +110,9 @@ runParser flags str parser = unP parser parseState
 
 stringBufferToByteString :: StringBuffer -> ByteString
 stringBufferToByteString StringBuffer{..} = PS buf cur len
+
+stringBufferToString :: StringBuffer -> String
+stringBufferToString =  T.unpack . T.decodeUtf8With T.lenientDecode . stringBufferToByteString
 
 bytestringToStringBuffer :: ByteString -> StringBuffer
 bytestringToStringBuffer (PS buf cur len) = StringBuffer{..}

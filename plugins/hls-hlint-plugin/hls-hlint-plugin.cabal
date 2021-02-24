@@ -53,7 +53,7 @@ library
     , transformers
     , unordered-containers
 
-  if ((!flag(ghc-lib) && impl(ghc >=8.10.1)) && impl(ghc <8.11.0))
+  if !flag(ghc-lib) && impl(ghc >=8.10.1) && impl(ghc <8.11.0)
     build-depends: ghc ^>= 8.10
 
   else

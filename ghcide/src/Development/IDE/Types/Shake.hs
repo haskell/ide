@@ -12,7 +12,14 @@ module Development.IDE.Types.Shake
     ShakeValue(..),
     currentValue,
     isBadDependency,
-  toShakeValue,encodeShakeValue,decodeShakeValue)
+    toShakeValue,
+    encodeShakeValue,
+    decodeShakeValue,
+    Token,
+    newToken,
+    WeakToken,
+    deRefWeakToken
+    )
 where
 
 import           Control.DeepSeq
@@ -31,10 +38,40 @@ import           Development.Shake                    (RuleResult,
 import           Development.Shake.Classes
 import           GHC.Generics
 import           Language.LSP.Types
+import Control.Concurrent.MVar
+import Data.Void
+import System.Mem.Weak
+import Data.Coerce
 
+-- | A Token is a value with a finalizer. The finalizer is called when
+-- there are no more live references to the the token
+newtype Token = Token (MVar Void)
+instance Show Token where
+  show _ = "Token{..}"
+instance NFData Token where
+  rnf (Token tok) = rnf tok
+
+-- | A weak pointer to a token. Use this if you need to reference a Token,
+-- but don't want the token to be kept alive by your reference
+type WeakToken = Weak (MVar Void)
+
+deRefWeakToken :: WeakToken -> IO (Maybe Token)
+deRefWeakToken weak = coerce $ deRefWeak weak
+
+-- | Create a new token with the given finalizer.
+newToken :: IO () -> IO (Token,WeakToken)
+newToken finalize = do
+  mv <- newEmptyMVar
+  weak <- mkWeakMVar mv finalize
+  pure (Token mv, weak)
+
+-- | The 'Token' attached to 'Value's correspond to the 'TextDocumentVersion'
+-- of the 'Value', and keep the 'PositionMapping' for that version alive in the map
+-- When no tokens corresponding to a particular 'TextDocumentVersion' are live and reachable,
+-- then the 'PositionMapping' associated with that 'TextDocumentVersion' is dropped.
 data Value v
-    = Succeeded TextDocumentVersion v
-    | Stale (Maybe PositionDelta) TextDocumentVersion v
+    = Succeeded TextDocumentVersion !(Maybe Token) v
+    | Stale (Maybe PositionDelta) TextDocumentVersion !(Maybe Token) v
     | Failed Bool -- True if we already tried the persistent rule
     deriving (Functor, Generic, Show)
 
@@ -43,8 +80,8 @@ instance NFData v => NFData (Value v)
 -- | Convert a Value to a Maybe. This will only return `Just` for
 -- up2date results not for stale values.
 currentValue :: Value v -> Maybe v
-currentValue (Succeeded _ v) = Just v
-currentValue (Stale _ _ _)   = Nothing
+currentValue (Succeeded _ _ v) = Just v
+currentValue (Stale _ _ _ _)   = Nothing
 currentValue Failed{}        = Nothing
 
 data ValueWithDiagnostics

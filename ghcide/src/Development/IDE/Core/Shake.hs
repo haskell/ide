@@ -146,6 +146,8 @@ import           Ide.Plugin.Config
 import qualified Ide.PluginUtils                      as HLS
 import           Ide.Types                            (PluginId)
 import           UnliftIO.Exception                   (bracket_)
+import Data.Functor.Compose
+import Debug.Trace
 
 -- | We need to serialize writes to the database, so we send any function that
 -- needs to write to the database over the channel, where it will be picked up by
@@ -175,7 +177,8 @@ data ShakeExtras = ShakeExtras
     ,publishedDiagnostics :: Var (HMap.HashMap NormalizedUri [Diagnostic])
     -- ^ This represents the set of diagnostics that we have published.
     -- Due to debouncing not every change might get published.
-    ,positionMapping :: Var (HMap.HashMap NormalizedUri (Map TextDocumentVersion (PositionDelta, PositionMapping)))
+    ,positionMapping :: Var (HMap.HashMap NormalizedUri (Map TextDocumentVersion (PositionDelta, PositionMapping, WeakToken)))
+    ,liveTokens :: Var (HMap.HashMap NormalizedUri (Token, TextDocumentVersion, WeakToken))
     -- ^ Map from a text document version to a PositionMapping that describes how to map
     -- positions in a version of that document to positions in the latest version
     -- First mapping is delta from previous version and second one is an
@@ -322,10 +325,16 @@ lastValueIO s@ShakeExtras{positionMapping,persistentKeys,state} k file = do
             f <- MaybeT $ pure $ HMap.lookup (Key k) pmap
             (dv,del,ver) <- MaybeT $ runIdeAction "lastValueIO" s $ f file
             MaybeT $ pure $ (,del,ver) <$> fromDynamic dv
-          modifyVar state $ \hm -> pure $ case mv of
-            Nothing -> (HMap.alter (alterValue $ Failed True) (file,Key k) hm,Nothing)
-            Just (v,del,ver) -> (HMap.alter (alterValue $ Stale (Just del) ver (toDyn v)) (file,Key k) hm
-                                ,Just (v,addDelta del $ mappingForVersion allMappings file ver))
+          modifyVar state $ \hm -> case mv of
+            Nothing -> pure (HMap.alter (alterValue $ Failed True) (file,Key k) hm,Nothing)
+            Just (v,del,ver) -> do
+              (tok,mapping) <- case Map.lookup ver =<< HMap.lookup (filePathToUri' file) allMappings of
+                       Nothing -> pure (Nothing, zeroMapping)
+                       Just (_,mapping,wtok) -> do
+                         tok <- deRefWeakToken wtok
+                         pure (tok,mapping)
+              pure (HMap.alter (alterValue $ Stale (Just del) ver tok (toDyn v)) (file,Key k) hm
+                   ,Just (v,addDelta del mapping))
 
         -- We got a new stale value from the persistent rule, insert it in the map without affecting diagnostics
         alterValue new Nothing = Just (ValueWithDiagnostics new mempty) -- If it wasn't in the map, give it empty diagnostics
@@ -338,8 +347,8 @@ lastValueIO s@ShakeExtras{positionMapping,persistentKeys,state} k file = do
     case HMap.lookup (file,Key k) hm of
       Nothing -> readPersistent
       Just (ValueWithDiagnostics v _) -> case v of
-        Succeeded ver (fromDynamic -> Just v) -> pure (Just (v, mappingForVersion allMappings file ver))
-        Stale del ver (fromDynamic -> Just v) -> pure (Just (v, maybe id addDelta del $ mappingForVersion allMappings file ver))
+        Succeeded ver _tok (fromDynamic -> Just v) -> pure (Just (v, mappingForVersion allMappings file ver))
+        Stale del ver _tok (fromDynamic -> Just v) -> pure (Just (v, maybe id addDelta del $ mappingForVersion allMappings file ver))
         Failed p | not p -> readPersistent
         _ -> pure Nothing
 
@@ -352,17 +361,17 @@ lastValue key file = do
 
 valueVersion :: Value v -> Maybe TextDocumentVersion
 valueVersion = \case
-    Succeeded ver _ -> Just ver
-    Stale _ ver _   -> Just ver
+    Succeeded ver _ _ -> Just ver
+    Stale _ ver _ _   -> Just ver
     Failed _        -> Nothing
 
 mappingForVersion
-    :: HMap.HashMap NormalizedUri (Map TextDocumentVersion (a, PositionMapping))
+    :: HMap.HashMap NormalizedUri (Map TextDocumentVersion (a, PositionMapping,c))
     -> NormalizedFilePath
     -> TextDocumentVersion
     -> PositionMapping
 mappingForVersion allMappings file ver =
-    maybe zeroMapping snd $
+    maybe zeroMapping snd3 $
     Map.lookup ver =<<
     HMap.lookup (filePathToUri' file) allMappings
 
@@ -457,8 +466,8 @@ knownTargets = do
 -- elsewhere and doing it twice is expensive.
 seqValue :: Value v -> b -> b
 seqValue v b = case v of
-    Succeeded ver v -> rnf ver `seq` v `seq` b
-    Stale d ver v   -> rnf d `seq` rnf ver `seq` v `seq` b
+    Succeeded ver _ v -> rnf ver `seq` v `seq` b
+    Stale d ver _ v   -> rnf d `seq` rnf ver `seq` v `seq` b
     Failed _        -> b
 
 -- | Open a 'IdeState', should be shut using 'shakeShut'.
@@ -488,6 +497,7 @@ shakeOpen lspEnv defaultConfig logger debouncer
         hiddenDiagnostics <- newVar mempty
         publishedDiagnostics <- newVar mempty
         positionMapping <- newVar HMap.empty
+        liveTokens <- newVar HMap.empty
         knownTargetsVar <- newVar $ hashed HMap.empty
         let restartShakeSession = shakeRestart ideState
         let session = shakeSession
@@ -911,7 +921,7 @@ defineEarlyCutoff
     => (k -> NormalizedFilePath -> Action (Maybe BS.ByteString, IdeResult v))
     -> Rules ()
 defineEarlyCutoff op = addBuiltinRule noLint noIdentity $ \(Q (key, file)) (old :: Maybe BS.ByteString) mode -> otTracedAction key file isSuccess $ do
-    extras@ShakeExtras{state, inProgress} <- getShakeExtras
+    extras@ShakeExtras{state, inProgress,liveTokens} <- getShakeExtras
     -- don't do progress for GetFileExists, as there are lots of non-nodes for just that one key
     (if show key == "GetFileExists" then id else withProgressVar inProgress file) $ do
         val <- case old of
@@ -931,20 +941,25 @@ defineEarlyCutoff op = addBuiltinRule noLint noIdentity $ \(Q (key, file)) (old 
                 (bs, (diags, res)) <- actionCatch
                     (do v <- op key file; liftIO $ evaluate $ force v) $
                     \(e :: SomeException) -> pure (Nothing, ([ideErrorText file $ T.pack $ show e | not $ isBadDependency e],Nothing))
-                modTime <- liftIO $ (currentValue . fst =<<) <$> getValues state GetModificationTime file
+                live <- liftIO $ readVar liveTokens
+                let !liveRes = HMap.lookup (filePathToUri' file) live
+                    mtime = snd3 =<< liveRes
+                    tok = fmap fst3 liveRes
+                _ <- liftIO $ evaluate $ force (mtime,tok)
                 (bs, res) <- case res of
                     Nothing -> do
                         staleV <- liftIO $ getValues state key file
                         pure $ case staleV of
                             Nothing -> (toShakeValue ShakeResult bs, Failed False)
                             Just v -> case v of
-                                (Succeeded ver v, _) ->
-                                    (toShakeValue ShakeStale bs, Stale Nothing ver v)
-                                (Stale d ver v, _) ->
-                                    (toShakeValue ShakeStale bs, Stale d ver v)
+                                (Succeeded ver tok v, _) ->
+                                    (toShakeValue ShakeStale bs, Stale Nothing ver tok v)
+                                (Stale d ver tok v, _) ->
+                                    (toShakeValue ShakeStale bs, Stale d ver tok v)
                                 (Failed b, _) ->
                                     (toShakeValue ShakeResult bs, Failed b)
-                    Just v -> pure (maybe ShakeNoCutoff ShakeResult bs, Succeeded (vfsVersion =<< modTime) v)
+                    Just v -> do
+                      pure (maybe ShakeNoCutoff ShakeResult bs, Succeeded mtime tok v)
                 liftIO $ setValues state key file res (Vector.fromList diags)
                 updateFileDiagnostics file (Key key) extras $ map (\(_,y,z) -> (y,z)) diags
                 let eq = case (bs, fmap decodeShakeValue old) of
@@ -1139,17 +1154,27 @@ filterVersionMap =
     HMap.intersectionWith $ \versionsToKeep versionMap -> Map.restrictKeys versionMap versionsToKeep
 
 updatePositionMapping :: IdeState -> VersionedTextDocumentIdentifier -> List TextDocumentContentChangeEvent -> IO ()
-updatePositionMapping IdeState{shakeExtras = ShakeExtras{positionMapping}} VersionedTextDocumentIdentifier{..} (List changes) = do
+updatePositionMapping IdeState{shakeExtras = ShakeExtras{positionMapping, liveTokens}} VersionedTextDocumentIdentifier{..} (List changes) = do
+    let uri = toNormalizedUri _uri
+    weak <- modifyVar liveTokens $ \oldToks -> do
+      let go x@(Just (_,ver,weak))
+            | ver > _version = Compose $ pure (weak, x)
+          go _ = Compose $ do
+            (tok, weak) <- newToken $ do
+              traceIO ("******************************************Finalized" ++ show (uri,_version))
+              modifyVar_ positionMapping $ pure . HMap.adjust (Map.delete _version) uri
+            pure $ (weak, Just (tok,_version,weak))
+      (weak, newToks) <- getCompose (HMap.alterF go uri oldToks)
+      pure (newToks,weak)
     modifyVar_ positionMapping $ \allMappings -> do
-        let uri = toNormalizedUri _uri
         let mappingForUri = HMap.lookupDefault Map.empty uri allMappings
         let (_, updatedMapping) =
                 -- Very important to use mapAccum here so that the tails of
                 -- each mapping can be shared, otherwise quadratic space is
                 -- used which is evident in long running sessions.
-                Map.mapAccumRWithKey (\acc _k (delta, _) -> let new = addDelta delta acc in (new, (delta, acc)))
+                Map.mapAccumRWithKey (\acc _k (delta, _,w) -> let new = addDelta delta acc in (new, (delta, acc,w)))
                   zeroMapping
-                  (Map.insert _version (shared_change, zeroMapping) mappingForUri)
+                  (Map.insert _version (shared_change, zeroMapping,weak) mappingForUri)
         pure $! HMap.insert uri updatedMapping allMappings
   where
     shared_change = mkDelta changes

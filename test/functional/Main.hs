@@ -16,6 +16,7 @@ import           ModuleName
 import           Progress
 import           Reference
 import           Rename
+import           Retrie
 import           Symbol
 import           Test.Hls
 import           TypeDefinition
@@ -42,4 +43,5 @@ main = defaultTestRunner
             , Rename.tests
             , Symbol.tests
             , TypeDefinition.tests
+            , Retrie.tests
             ]

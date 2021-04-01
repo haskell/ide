@@ -417,6 +417,7 @@ test-suite func-test
     Rename
     Symbol
     TypeDefinition
+    Retrie
     Test.Hls.Command
 
   default-extensions: OverloadedStrings

@@ -301,7 +301,8 @@ executable haskell-language-server
     -rtsopts
     -- disable idle GC
     -- increase nursery size
-    "-with-rtsopts=-I0 -A128M"
+    -- Enable collection of heap statistics
+    "-with-rtsopts=-I0 -A128M -T"
     -Wno-unticked-promoted-constructors
   if flag(pedantic)
     ghc-options: -Werror

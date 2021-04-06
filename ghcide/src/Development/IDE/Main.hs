@@ -53,6 +53,7 @@ import           Development.IDE.Types.Options         (IdeGhcSession,
                                                         clientSupportsProgress,
                                                         defaultIdeOptions)
 import           Development.IDE.Types.Shake           (Key (Key))
+import           Development.IDE.Main.HeapStats        (withHeapStats)
 import           Development.Shake                     (action)
 import           GHC.IO.Encoding                       (setLocaleEncoding)
 import           GHC.IO.Handle                         (hDuplicate)
@@ -136,7 +137,7 @@ stderrLogger = do
         T.hPutStrLn stderr $ "[" <> T.pack (show p) <> "] " <> m
 
 defaultMain :: Arguments -> IO ()
-defaultMain Arguments{..} = do
+defaultMain Arguments{..} = withHeapStats argsLogger $ do
     setLocaleEncoding utf8
     pid <- T.pack . show <$> getProcessID
     logger <- argsLogger

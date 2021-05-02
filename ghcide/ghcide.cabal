@@ -188,6 +188,7 @@ library
         Development.IDE.Plugin.CodeAction.ExactPrint
         Development.IDE.Plugin.HLS
         Development.IDE.Plugin.HLS.GhcIde
+        Development.IDE.Plugin.LspLogger
         Development.IDE.Plugin.Test
         Development.IDE.Plugin.TypeLenses
 
@@ -348,6 +349,7 @@ test-suite ghcide-tests
         hls-plugin-api,
         network-uri,
         lens,
+        lsp,
         lsp-test == 0.14.0.0,
         optparse-applicative,
         process,
@@ -359,6 +361,7 @@ test-suite ghcide-tests
         safe-exceptions,
         shake,
         hls-graph,
+        sqlite-simple,
         tasty,
         tasty-expected-failure,
         tasty-hunit,

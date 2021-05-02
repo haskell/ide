@@ -35,9 +35,11 @@ import           Development.IDE.Core.PositionMapping     (PositionResult (..),
                                                            positionResultToMaybe,
                                                            toCurrent)
 import           Development.IDE.Core.Shake               (Q (..))
+import           Development.IDE.Graph                    (shakeThreads)
 import qualified Development.IDE.Main                     as IDE
 import           Development.IDE.GHC.Util
 import           Development.IDE.Plugin.Completions.Types (extendImportCommandId)
+import           Development.IDE.Plugin.LspLogger
 import           Development.IDE.Plugin.TypeLenses        (typeLensCommandId)
 import           Development.IDE.Spans.Common
 import           Development.IDE.Test                     (Cursor,
@@ -54,6 +56,7 @@ import           Development.IDE.Test                     (Cursor,
 import           Development.IDE.Test.Runfiles
 import qualified Development.IDE.Types.Diagnostics        as Diagnostics
 import           Development.IDE.Types.Location
+import           Development.IDE.Types.Options
 import           Development.Shake                        (getDirectoryFilesIO)
 import qualified Experiments                              as Bench
 import           Ide.Plugin.Config
@@ -99,7 +102,10 @@ import           Ide.Types
 import           Data.String                              (IsString(fromString))
 import qualified Language.LSP.Types                       as LSP
 import           Data.IORef.Extra                         (atomicModifyIORef_)
+import           Database.SQLite.Simple (SQLError(SQLError))
+import           Development.IDE.Core.Rules (mainRule)
 import qualified Development.IDE.Plugin.HLS.GhcIde        as Ghcide
+import qualified Development.IDE.Plugin.Test as Test
 import           Text.Regex.TDFA                          ((=~))
 
 waitForProgressBegin :: Session ()
@@ -188,7 +194,7 @@ initializeResponseTests = withResource acquire release tests where
     , chk "NO doc link"               _documentLinkProvider Nothing
     , chk "NO color"                         _colorProvider (Just $ InL False)
     , chk "NO folding range"          _foldingRangeProvider (Just $ InL False)
-    , che "   execute command"      _executeCommandProvider [extendImportCommandId, typeLensCommandId, blockCommandId]
+    , che "   execute command"      _executeCommandProvider [blockCommandId, extendImportCommandId, typeLensCommandId]
     , chk "   workspace"                         _workspace (Just $ WorkspaceServerCapabilities (Just WorkspaceFoldersServerCapabilities{_supported = Just True, _changeNotifications = Just ( InR True )}))
     , chk "NO experimental"                   _experimental Nothing
     ] where
@@ -705,7 +711,8 @@ cancellationTemplate (edit, undoEdit) mbKey = testCase (maybe "-" fst mbKey) $ r
       expectNoMoreDiagnostics 0.5
     where
         -- similar to run except it disables kick
-        runTestNoKick s = withTempDir $ \dir -> runInDir' dir "." "." ["--test-no-kick"] s
+        runTestNoKick s = withTempDir $ \dir -> runInDir' argsNoKick dir "." s
+        argsNoKick = def { IDE.argsRules = mainRule }
 
         typeCheck doc = do
             Right WaitForIdeRuleResult {..} <- waitForAction "TypeCheck" doc
@@ -5040,7 +5047,7 @@ benchmarkTests =
 
 -- | checks if we use InitializeParams.rootUri for loading session
 rootUriTests :: TestTree
-rootUriTests = testCase "use rootUri" . runTest "dirA" "dirB" $ \dir -> do
+rootUriTests = testCase "use rootUri" . runTest "dirB" $ \dir -> do
   let bPath = dir </> "dirB/Foo.hs"
   liftIO $ copyTestDataFiles dir "rootUri"
   bSource <- liftIO $ readFileUtf8 bPath
@@ -5048,8 +5055,8 @@ rootUriTests = testCase "use rootUri" . runTest "dirA" "dirB" $ \dir -> do
   expectNoMoreDiagnostics 0.5
   where
     -- similar to run' except we can configure where to start ghcide and session
-    runTest :: FilePath -> FilePath -> (FilePath -> Session ()) -> IO ()
-    runTest dir1 dir2 s = withTempDir $ \dir -> runInDir' dir dir1 dir2 [] (s dir)
+    runTest :: FilePath -> (FilePath -> Session ()) -> IO ()
+    runTest dir2 s = withTempDir $ \dir -> runInDir' def dir dir2 (s dir)
 
 -- | Test if ghcide asynchronously handles Commands and user Requests
 asyncTests :: TestTree
@@ -5333,36 +5340,24 @@ run' :: (FilePath -> Session a) -> IO a
 run' s = withTempDir $ \dir -> runInDir dir (s dir)
 
 runInDir :: FilePath -> Session a -> IO a
-runInDir dir = runInDir' dir "." "." []
+runInDir dir = runInDir' def dir "."
 
 withLongTimeout :: IO a -> IO a
 withLongTimeout = bracket_ (setEnv "LSP_TIMEOUT" "120" True) (unsetEnv "LSP_TIMEOUT")
 
 -- | Takes a directory as well as relative paths to where we should launch the executable as well as the session root.
-runInDir' :: FilePath -> FilePath -> FilePath -> [String] -> Session a -> IO a
-runInDir' dir startExeIn startSessionIn extraOptions s = do
-  ghcideExe <- locateGhcideExecutable
-  let startDir = dir </> startExeIn
+runInDir' :: IDE.Arguments -> FilePath -> FilePath -> Session a -> IO a
+runInDir' args dir startSessionIn s = do
   let projDir = dir </> startSessionIn
 
-  createDirectoryIfMissing True startDir
   createDirectoryIfMissing True projDir
-  -- Temporarily hack around https://github.com/mpickering/hie-bios/pull/56
-  -- since the package import test creates "Data/List.hs", which otherwise has no physical home
-  createDirectoryIfMissing True $ projDir ++ "/Data"
-
-  shakeProfiling <- getEnv "SHAKE_PROFILING"
-  let cmd = unwords $
-       [ghcideExe, "--lsp", "--test", "--verbose", "-j2", "--cwd", startDir
-       ] ++ ["--shake-profiling=" <> dir | Just dir <- [shakeProfiling]
-       ] ++ extraOptions
   -- HIE calls getXgdDirectory which assumes that HOME is set.
   -- Only sets HOME if it wasn't already set.
   setEnv "HOME" "/homeless-shelter" False
-  conf <- getConfigFromEnv
-  runSessionWithConfig conf cmd lspTestCaps projDir s
 
-getConfigFromEnv :: IO SessionConfig
+  testIde projDir args s
+
+getConfigFromEnv ::IO SessionConfig
 getConfigFromEnv = do
   logColor <- fromMaybe True <$> checkEnv "LSP_TEST_LOG_COLOR"
   timeoutOverride <- fmap read <$> getEnv "LSP_TIMEOUT"
@@ -5458,7 +5453,7 @@ unitTests = do
                     | i <- [(1::Int)..20]
                 ] ++ Ghcide.descriptors
 
-        testIde def{IDE.argsHlsPlugins = plugins} $ do
+        testIde "." def{IDE.argsHlsPlugins = plugins} $ do
             _ <- createDoc "haskell" "A.hs" "module A where"
             waitForProgressDone
             actualOrder <- liftIO $ readIORef orderRef
@@ -5466,18 +5461,47 @@ unitTests = do
             liftIO $ actualOrder @?= reverse [(1::Int)..20]
      ]
 
-testIde :: IDE.Arguments -> Session () -> IO ()
-testIde arguments session = do
+testIde :: FilePath -> IDE.Arguments -> Session a -> IO a
+testIde rootDir arguments session = do
     config <- getConfigFromEnv
+    shakeProfiling <- getEnv "SHAKE_PROFILING"
     (hInRead, hInWrite) <- createPipe
     (hOutRead, hOutWrite) <- createPipe
-    let server = IDE.defaultMain arguments
-            { IDE.argsHandleIn = pure hInRead
-            , IDE.argsHandleOut = pure hOutWrite
-            }
+    (logger, loggerPlugin) <- lspLogger
+    server <- async $ IDE.defaultMain arguments
+        { IDE.argsHandleIn = pure hInRead
+        , IDE.argsHandleOut = pure hOutWrite
+        , IDE.argsHlsPlugins =
+            pluginDescToIdePlugins
+                [ loggerPlugin, Test.blockCommandDescriptor "block-command" ]
+            <> IDE.argsHlsPlugins arguments
+        , IDE.argsGhcidePlugin = Test.plugin
+        , IDE.argsIdeOptions = \config sessionLoader ->
+            let ideOptions = (IDE.argsIdeOptions def config sessionLoader)
+                    {optTesting = IdeTesting True
+                    ,optShakeProfiling = shakeProfiling
+                    }
+            in ideOptions
+                { optShakeOptions = (optShakeOptions ideOptions) {shakeThreads = 2}}
+        , IDE.argsLogger = pure logger
+        }
 
-    withAsync server $ \_ ->
-        runSessionWithHandles hInWrite hOutRead config lspTestCaps "." session
+    let runIt = runSessionWithHandles hInWrite hOutRead config lspTestCaps rootDir session
+    -- catch SQL errors and retry once to handle the hiedb getting locked by a previous test
+    res <- runIt `catch` \SQLError{} -> do
+        sleep 1
+        runIt
+
+    timeout 3 (wait server) >>= \case
+        Just () -> pure ()
+        Nothing -> do
+            putStrLn "Server does not exit in 3s, canceling the async task..."
+            (t, _) <- duration $ cancel server
+            putStrLn $ "Finishing canceling (took " <> showDuration t <> "s)"
+
+    hClose hInWrite
+    hClose hOutRead
+    return res
 
 positionMappingTests :: TestTree
 positionMappingTests =

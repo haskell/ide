@@ -134,15 +134,17 @@ runLanguageServer options inH outH getHieDbLoc defaultConfig onConfigurationChan
             ide <- getIdeState env (makeLSPVFSHandle env) root hiedb hieChan
 
             let initConfig = parseConfiguration params
-            logInfo (ideLogger ide) $ T.pack $ "Registering ide configuration: " <> show initConfig
+                l = ideLogger ide
+            logInfo l $ T.pack $ "Registering ide configuration: " <> show initConfig
             registerIdeConfiguration (shakeExtras ide) initConfig
 
             let handleServerException (Left e) = do
                     logError (ideLogger ide) $
                         T.pack $ "Fatal error in server thread: " <> show e
                     exitClientMsg
+                    throwIO e
                 handleServerException _ = pure ()
-            _ <- flip forkFinally handleServerException $ runWithDb dbLoc $ \hiedb hieChan -> do
+            _ <- flip forkFinally handleServerException $ runWithDb l dbLoc $ \hiedb hieChan -> do
               putMVar dbMVar (hiedb,hieChan)
               forever $ do
                 msg <- readChan clientMsgChan

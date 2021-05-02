@@ -56,7 +56,7 @@ import           Development.IDE.Session               (SessionLoadingOptions,
                                                         setInitialDynFlags)
 import           Development.IDE.Types.Location        (NormalizedUri,
                                                         toNormalizedFilePath')
-import           Development.IDE.Types.Logger          (Logger (Logger))
+import           Development.IDE.Types.Logger
 import           Development.IDE.Types.Options         (IdeGhcSession,
                                                         IdeOptions (optCheckParents, optCheckProject, optReportProgress),
                                                         clientSupportsProgress,
@@ -198,11 +198,11 @@ defaultMain Arguments{..} = do
     case argCommand of
         LSP -> do
             t <- offsetTime
-            hPutStrLn stderr "Starting LSP server..."
-            hPutStrLn stderr "If you are seeing this in a terminal, you probably should have run WITHOUT the --lsp option!"
+            logInfo logger "Starting LSP server..."
+            logInfo logger "If you are seeing this in a terminal, you probably should have run WITHOUT the --lsp option!"
             runLanguageServer options inH outH argsGetHieDbLoc argsDefaultHlsConfig argsOnConfigChange (pluginHandlers plugins) $ \env vfs rootPath hiedb hieChan -> do
                 t <- t
-                hPutStrLn stderr $ "Started LSP server in " ++ showDuration t
+                logInfo logger $ "Started LSP server in " <> T.pack(showDuration t)
 
                 dir <- IO.getCurrentDirectory
 
@@ -211,8 +211,8 @@ defaultMain Arguments{..} = do
                 -- We do it here since haskell-lsp changes our working directory to the correct place ('rootPath')
                 -- before calling this function
                 _mlibdir <-
-                    setInitialDynFlags argsSessionLoadingOptions
-                        `catchAny` (\e -> (hPutStrLn stderr $ "setInitialDynFlags: " ++ displayException e) >> pure Nothing)
+                    setInitialDynFlags logger argsSessionLoadingOptions
+                        `catchAny` (\e -> (logError logger $ "setInitialDynFlags: " <> T.pack(displayException e)) >> pure Nothing)
 
                 sessionLoader <- loadSessionWithOptions argsSessionLoadingOptions $ fromMaybe dir rootPath
                 config <- LSP.runLspT env LSP.getConfig
@@ -233,7 +233,7 @@ defaultMain Arguments{..} = do
         Check argFiles -> do
           dir <- IO.getCurrentDirectory
           dbLoc <- getHieDbLoc dir
-          runWithDb dbLoc $ \hiedb hieChan -> do
+          runWithDb logger dbLoc $ \hiedb hieChan -> do
             -- GHC produces messages with UTF8 in them, so make sure the terminal doesn't error
             hSetEncoding stdout utf8
             hSetEncoding stderr utf8
@@ -295,13 +295,13 @@ defaultMain Arguments{..} = do
         Db dir opts cmd -> do
             dbLoc <- getHieDbLoc dir
             hPutStrLn stderr $ "Using hiedb at: " ++ dbLoc
-            mlibdir <- setInitialDynFlags def
+            mlibdir <- setInitialDynFlags logger def
             case mlibdir of
                 Nothing     -> exitWith $ ExitFailure 1
                 Just libdir -> HieDb.runCommand libdir opts{HieDb.database = dbLoc} cmd
         Custom projectRoot (IdeCommand c) -> do
           dbLoc <- getHieDbLoc projectRoot
-          runWithDb dbLoc $ \hiedb hieChan -> do
+          runWithDb logger dbLoc $ \hiedb hieChan -> do
             vfs <- makeVFSHandle
             sessionLoader <- loadSessionWithOptions argsSessionLoadingOptions "."
             let options =

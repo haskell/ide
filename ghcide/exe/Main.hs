@@ -8,7 +8,7 @@ module Main(main) where
 import           Arguments                         (Arguments (..),
                                                     getArguments)
 import           Control.Concurrent.Extra          (newLock, withLock)
-import           Control.Monad.Extra               (unless, when, whenJust)
+import           Control.Monad.Extra               (when)
 import qualified Data.Aeson.Encode.Pretty          as A
 import           Data.Default                      (Default (def))
 import           Data.List.Extra                   (upper)
@@ -19,20 +19,16 @@ import qualified Data.Text.Lazy.IO                 as LT
 import           Data.Version                      (showVersion)
 import           Development.GitRev                (gitHash)
 import           Development.IDE                   (Logger (Logger),
-                                                    Priority (Info), action)
-import           Development.IDE.Core.OfInterest   (kick)
-import           Development.IDE.Core.Rules        (mainRule)
+                                                    Priority (Info))
+import           Development.IDE.Graph             (ShakeOptions (shakeThreads))
 import qualified Development.IDE.Main              as Main
 import qualified Development.IDE.Plugin.HLS.GhcIde as GhcIde
-import qualified Development.IDE.Plugin.Test       as Test
 import           Development.IDE.Types.Options
-import           Development.IDE.Graph                 (ShakeOptions (shakeThreads))
 import           Ide.Plugin.Config                 (Config (checkParents, checkProject))
 import           Ide.Plugin.ConfigUtils            (pluginsToDefaultConfig,
                                                     pluginsToVSCodeExtensionSchema)
 import           Ide.PluginUtils                   (pluginDescToIdePlugins)
 import           Paths_ghcide                      (version)
-import qualified System.Directory.Extra            as IO
 import           System.Environment                (getExecutablePath)
 import           System.Exit                       (exitSuccess)
 import           System.IO                         (hPutStrLn, stderr)
@@ -68,8 +64,6 @@ main = do
       LT.putStrLn $ decodeUtf8 $ A.encodePretty $ pluginsToDefaultConfig hlsPlugins
       exitSuccess
 
-    whenJust argsCwd IO.setCurrentDirectory
-
     -- lock to avoid overlapping output on stdout
     lock <- newLock
     let logger = Logger $ \pri msg -> when (pri >= logLevel) $ withLock lock $
@@ -78,32 +72,12 @@ main = do
 
     Main.defaultMain def
         {Main.argCommand = argsCommand
-
         ,Main.argsLogger = pure logger
-
-        ,Main.argsRules = do
-            -- install the main and ghcide-plugin rules
-            mainRule
-            -- install the kick action, which triggers a typecheck on every
-            -- Shake database restart, i.e. on every user edit.
-            unless argsDisableKick $
-                action kick
-
-        ,Main.argsHlsPlugins =
-            pluginDescToIdePlugins $
-            GhcIde.descriptors
-            ++ [Test.blockCommandDescriptor "block-command" | argsTesting]
-
-        ,Main.argsGhcidePlugin = if argsTesting
-            then Test.plugin
-            else mempty
-
         ,Main.argsIdeOptions = \config  sessionLoader ->
             let defOptions = defaultIdeOptions sessionLoader
             in defOptions
                 { optShakeProfiling = argsShakeProfiling
                 , optOTMemoryProfiling = IdeOTMemoryProfiling argsOTMemoryProfiling
-                , optTesting = IdeTesting argsTesting
                 , optShakeOptions = (optShakeOptions defOptions){shakeThreads = argsThreads}
                 , optCheckParents = pure $ checkParents config
                 , optCheckProject = pure $ checkProject config

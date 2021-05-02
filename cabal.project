@@ -17,6 +17,11 @@ packages:
          ./plugins/hls-retrie-plugin
          ./plugins/hls-haddock-comments-plugin
          ./plugins/hls-splice-plugin
+source-repository-package
+    type: git
+    location: https://github.com/pepeiborra/lsp
+    tag: a7ef1f7f888298324ffb2e487a4276653e09a675
+    subdir: lsp
 tests: true
 
 package *

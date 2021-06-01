@@ -19,7 +19,8 @@ module Development.IDE.Graph(
     reschedule,
     ) where
 
-import           Development.IDE.Graph.Internal.Action
-import           Development.IDE.Graph.Internal.Options
-import           Development.IDE.Graph.Internal.Rules
-import qualified Development.Shake                      as Shake
+import qualified Development.Shake as Shake
+import Development.IDE.Graph.Internal.Action
+import Development.IDE.Graph.Internal.Options
+import Development.IDE.Graph.Internal.Rules
+import Development.IDE.Graph.Internal.Types

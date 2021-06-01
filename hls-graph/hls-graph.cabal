@@ -35,12 +35,20 @@ library
     Development.IDE.Graph.Internal.Action
     Development.IDE.Graph.Internal.Options
     Development.IDE.Graph.Internal.Rules
+    Development.IDE.Graph.Internal.Database
+    Development.IDE.Graph.Internal.Ids
+    Development.IDE.Graph.Internal.Intern
+    Development.IDE.Graph.Internal.Types
 
   hs-source-dirs:     src
   build-depends:
+    , async
     , base >=4.12 && <5
     , bytestring
+    , extra
+    , primitive
     , shake >= 0.19.4
+    , transformers
     , unordered-containers
 
   ghc-options:

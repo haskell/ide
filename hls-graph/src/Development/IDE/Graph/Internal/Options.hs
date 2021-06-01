@@ -2,11 +2,9 @@
 
 module Development.IDE.Graph.Internal.Options where
 
-import           Data.Dynamic
-import qualified Data.HashMap.Strict                   as Map
-import           Development.IDE.Graph.Internal.Action
-import           Development.IDE.Graph.Internal.Rules
-import qualified Development.Shake                     as Shake
+import Data.Dynamic
+import Control.Monad.Trans.Reader
+import Development.IDE.Graph.Internal.Types
 
 data ShakeOptions = ShakeOptions {
     shakeThreads            :: Int,
@@ -19,22 +17,15 @@ data ShakeOptions = ShakeOptions {
 shakeOptions :: ShakeOptions
 shakeOptions = ShakeOptions 0 ".shake" Nothing False False
 
-fromShakeOptions :: ShakeOptions -> Shake.ShakeOptions
-fromShakeOptions ShakeOptions{..} = Shake.shakeOptions{
-    Shake.shakeThreads = shakeThreads,
-    Shake.shakeFiles = shakeFiles,
-    Shake.shakeExtra = maybe Map.empty f shakeExtra,
-    Shake.shakeAllowRedefineRules = shakeAllowRedefineRules,
-    Shake.shakeTimings = shakeTimings
-    }
-    where f x = Map.singleton (dynTypeRep x) x
-
-
 getShakeExtra :: Typeable a => Action (Maybe a)
-getShakeExtra = Action Shake.getShakeExtra
+getShakeExtra = do
+    extra <- Action $ asks $ databaseExtra . actionDatabase
+    pure $ fromDynamic extra
 
 getShakeExtraRules :: Typeable a => Rules (Maybe a)
-getShakeExtraRules = Rules Shake.getShakeExtraRules
+getShakeExtraRules = do
+    extra <- Rules $ asks rulesExtra
+    pure $ fromDynamic extra
 
 newShakeExtra :: Typeable a => a -> Maybe Dynamic
 newShakeExtra = Just . toDyn

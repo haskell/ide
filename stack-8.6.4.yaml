@@ -6,7 +6,7 @@ packages:
   - ./hie-compat
   - ./hls-graph
   - ./ghcide/
-# - ./shake-bench
+  # - ./shake-bench
   - ./hls-plugin-api
   - ./hls-test-utils
   - ./plugins/hls-class-plugin
@@ -15,6 +15,7 @@ packages:
   - ./plugins/hls-explicit-imports-plugin
   - ./plugins/hls-refine-imports-plugin
   - ./plugins/hls-hlint-plugin
+  - ./plugins/hls-rename-plugin
   - ./plugins/hls-retrie-plugin
   - ./plugins/hls-splice-plugin
   - ./plugins/hls-tactics-plugin
@@ -109,11 +110,11 @@ flags:
 
 configure-options:
   ghcide:
-      - --disable-library-for-ghci
+    - --disable-library-for-ghci
   haskell-language-server:
-      - --disable-library-for-ghci
+    - --disable-library-for-ghci
   heapsize:
-      - --disable-library-for-ghci
+    - --disable-library-for-ghci
 
 nix:
   packages: [icu libcxx zlib]

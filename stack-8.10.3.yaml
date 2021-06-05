@@ -14,6 +14,7 @@ packages:
   - ./plugins/hls-explicit-imports-plugin
   - ./plugins/hls-refine-imports-plugin
   - ./plugins/hls-hlint-plugin
+  - ./plugins/hls-rename-plugin
   - ./plugins/hls-retrie-plugin
   - ./plugins/hls-splice-plugin
   - ./plugins/hls-tactics-plugin
@@ -64,11 +65,11 @@ extra-deps:
 
 configure-options:
   ghcide:
-      - --disable-library-for-ghci
+    - --disable-library-for-ghci
   haskell-language-server:
-      - --disable-library-for-ghci
+    - --disable-library-for-ghci
   heapsize:
-      - --disable-library-for-ghci
+    - --disable-library-for-ghci
 
 flags:
   haskell-language-server:
@@ -77,6 +78,6 @@ flags:
     BuildExecutable: false
 
 nix:
-  packages: [ icu libcxx zlib ]
+  packages: [icu libcxx zlib]
 
 concurrent-tests: false

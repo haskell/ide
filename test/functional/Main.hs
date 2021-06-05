@@ -14,7 +14,6 @@ import           HieBios
 import           Highlight
 import           Progress
 import           Reference
-import           Rename
 import           Symbol
 import           Test.Hls
 import           TypeDefinition
@@ -37,7 +36,6 @@ main = defaultTestRunner
             , Highlight.tests
             , Progress.tests
             , Reference.tests
-            , Rename.tests
             , Symbol.tests
             , TypeDefinition.tests
             ]

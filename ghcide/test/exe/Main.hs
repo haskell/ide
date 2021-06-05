@@ -188,7 +188,7 @@ initializeResponseTests = withResource acquire release tests where
                            _documentRangeFormattingProvider (Just $ InL False)
     , chk "NO doc formatting on typing"
                           _documentOnTypeFormattingProvider Nothing
-    , chk "NO renaming"                     _renameProvider (Just $ InL False)
+    , chk "   renaming"                     _renameProvider (Just $ InL True)
     , chk "NO doc link"               _documentLinkProvider Nothing
     , chk "NO color"                         _colorProvider (Just $ InL False)
     , chk "NO folding range"          _foldingRangeProvider (Just $ InL False)

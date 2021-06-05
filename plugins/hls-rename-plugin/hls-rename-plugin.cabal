@@ -1,0 +1,47 @@
+cabal-version:      2.4
+name:               hls-rename-plugin
+version:            1.0.0.0
+synopsis:           Rename plugin for Haskell Language Server
+description:
+  Please see the README on GitHub at <https://github.com/haskell/haskell-language-server#readme>
+
+license:            Apache-2.0
+license-file:       LICENSE
+author:             Oliver Madine
+maintainer:         madine.oliver@gmail.com
+category:           Development
+build-type:         Simple
+extra-source-files:
+  LICENSE
+  test/testdata/*.hs
+  test/testdata/*.yaml
+
+library
+  exposed-modules:  Ide.Plugin.Rename
+  hs-source-dirs:   src
+  build-depends:
+    , base            >=4.12 && <5
+    , lsp-types
+    , lsp
+    , hls-plugin-api  ^>=1.1
+    , ghcide          >=1.3.0.1
+    , text
+    , unordered-containers
+    , extra
+    , containers
+    , hiedb
+    , ghc
+
+  default-language: Haskell2010
+
+test-suite tests
+  type:             exitcode-stdio-1.0
+  default-language: Haskell2010
+  hs-source-dirs:   test
+  main-is:          Main.hs
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , base
+    , filepath
+    , hls-rename-plugin
+    , hls-test-utils      ^>=1.0

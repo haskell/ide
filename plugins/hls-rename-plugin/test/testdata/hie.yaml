@@ -1,0 +1,12 @@
+cradle:
+  direct:
+    arguments:
+      - "FunctionName"
+      - "FunctionArgument"
+      - "ImportedFunction"
+      - "QualifiedFunction"
+      - "RecordField"
+      - "ShadowedName"
+      - "TypeVariable"
+      - "TypeConstructor"
+      - "DataConstructor"

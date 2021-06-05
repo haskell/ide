@@ -33,6 +33,10 @@ import           Ide.Plugin.ExplicitImports        as ExplicitImports
 import           Ide.Plugin.RefineImports          as RefineImports
 #endif
 
+#if rename
+import           Ide.Plugin.Rename                 as Rename
+#endif
+
 #if retrie
 import           Ide.Plugin.Retrie                 as Retrie
 #endif
@@ -110,6 +114,9 @@ idePlugins includeExamples = pluginDescToIdePlugins allPlugins
 #endif
 #if stylishHaskell
       StylishHaskell.descriptor "stylish-haskell" :
+#endif
+#if rename
+      Rename.descriptor "rename" :
 #endif
 #if retrie
       Retrie.descriptor "retrie" :

@@ -3,6 +3,8 @@ cradle:
     arguments:
     - UsualCase.hs
     - WithOverride.hs
+    - UnusedImport.hs
+    - UnusedImportLens.hs
     - A.hs
     - B.hs
     - C.hs

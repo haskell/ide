@@ -7,57 +7,66 @@
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE TypeFamilies          #-}
 
-module Ide.Plugin.RefineImports (descriptor) where
+module Ide.Plugin.RefineImports
+  ( descriptor
+  , RefineImports(..)
+  , RefineImportsResult(..)
+  , RemoveUnusedImports(..)
+  , RemoveUnusedImportsResult(..)
+  , mkExplicitEdit
+  , mkExplicitEdit'
+  ) where
 
-import           Avail                                (AvailInfo (Avail),
-                                                       availName, availNames,
-                                                       availNamesWithSelectors)
-import           Control.Arrow                        (Arrow (second))
-import           Control.DeepSeq                      (rwhnf)
-import           Control.Monad                        (join)
-import           Control.Monad.IO.Class               (liftIO)
+import           Avail                                             (AvailInfo (Avail),
+                                                                    availName,
+                                                                    availNames,
+                                                                    availNamesWithSelectors)
+import           Control.DeepSeq                                   (rwhnf)
+import           Control.Monad.IO.Class                            (liftIO)
 import           Data.Aeson.Types
-import qualified Data.HashMap.Strict                  as HashMap
-import           Data.IORef                           (readIORef)
-import           Data.List                            (intercalate)
-import qualified Data.Map.Strict                      as Map
-import           Data.Maybe                           (catMaybes, fromMaybe)
-import qualified Data.Set                             as S
-import qualified Data.Text                            as T
-import           Data.Traversable                     (forM)
-import           Development.IDE
+import qualified Data.HashMap.Strict                               as HashMap
+import           Data.List.Extra                                   (notNull)
+import qualified Data.Map.Strict                                   as Map
+import           Data.Maybe                                        (catMaybes,
+                                                                    fromMaybe)
+import qualified Data.Set                                          as S
+import qualified Data.Text                                         as T
+import           Data.Traversable                                  (forM)
+import           Development.IDE                                   hiding
+                                                                   (getFileContents)
 import           Development.IDE.Core.PositionMapping
-import           Development.IDE.GHC.Compat           (AvailInfo,
-                                                       GenLocated (L), GhcRn,
-                                                       HsModule (hsmodImports),
-                                                       ImportDecl (ImportDecl, ideclHiding, ideclName),
-                                                       LIE, LImportDecl,
-                                                       Module (moduleName),
-                                                       ModuleName,
-                                                       ParsedModule (ParsedModule, pm_parsed_source),
-                                                       SrcSpan (RealSrcSpan),
-                                                       getLoc, ieName, noLoc,
-                                                       tcg_exports, unLoc)
+import           Development.IDE.GHC.Compat                        (AvailInfo,
+                                                                    GenLocated (L),
+                                                                    GhcRn,
+                                                                    HsModule (hsmodImports),
+                                                                    ImportDecl (ImportDecl, ideclHiding, ideclName),
+                                                                    LIE,
+                                                                    LImportDecl,
+                                                                    Module (moduleName),
+                                                                    ModuleName,
+                                                                    ParsedModule (ParsedModule, pm_parsed_source),
+                                                                    SrcSpan (RealSrcSpan),
+                                                                    getLoc,
+                                                                    ieName,
+                                                                    noLoc,
+                                                                    tcg_exports,
+                                                                    unLoc)
 import           Development.IDE.Graph.Classes
-import           GHC.Generics                         (Generic)
-import           Ide.Plugin.ExplicitImports           (extractMinimalImports,
-                                                       within)
-import           Ide.PluginUtils                      (mkLspCommand)
+import           Development.IDE.Plugin.CodeAction.PositionIndexed (extendToIncludePreviousNewlineIfPossible,
+                                                                    indexedByPosition)
+import           GHC.Generics                                      (Generic)
+import           Ide.Plugin.ExplicitImports                        (within)
+import qualified Ide.Plugin.ExplicitImports                        as EI
 import           Ide.Types
 import           Language.LSP.Server
 import           Language.LSP.Types
-import           PrelNames                            (pRELUDE)
-import           RnNames                              (findImportUsage,
-                                                       getMinimalImports)
-import           TcRnMonad                            (initTcWithGbl,
-                                                       tcg_rn_exports,
-                                                       tcg_used_gres)
+import           PrelNames                                         (pRELUDE)
 
 -- | plugin declaration
 descriptor :: PluginId -> PluginDescriptor IdeState
 descriptor plId = (defaultPluginDescriptor plId)
   { pluginCommands = [refineImportCommand]
-  , pluginRules = refineImportsRule
+  , pluginRules = refineImportsRule <> removeUnusedImportsRule
   , pluginHandlers = mconcat
       [ -- This plugin provides code lenses
         mkPluginHandler STextDocumentCodeLens lensProvider
@@ -100,18 +109,35 @@ lensProvider
       do
         mbRefinedImports <-
           runIde state $ useWithStale RefineImports nfp
-        case mbRefinedImports of
+        mbRemoveUnusedImports <-
+          runIde state $ useWithStale RemoveUnusedImports nfp
+        retRefinedImports <- case mbRefinedImports of
           -- Implement the provider logic:
           -- for every refined import, generate a code lens
           Just (RefineImportsResult result, posMapping) -> do
             commands <-
               sequence
-                [ generateLens pId _uri edit
+                [ generateLens' pId _uri edit
                 | (imp, Just refinedImports) <- result
-                , Just edit <- [mkExplicitEdit posMapping imp refinedImports]
+                , Just edit <- [mkExplicitEdit' posMapping imp refinedImports]
                 ]
-            return $ Right (List $ catMaybes commands)
-          _ -> return $ Right (List [])
+            return $ List $ catMaybes commands
+          _ -> return $ List []
+        retRemoveUnusedImports <- case mbRemoveUnusedImports of
+          -- Implement the provider logic:
+          -- for every unused import, generate a code lens
+          Just (RemoveUnusedImportsResult result, posMapping) -> do
+            mbContent <- getFileContents state nfp
+            commands <-
+              sequence
+                [ generateLens pId _uri edit rng
+                | imp <- result
+                , Just (edit, rng) <- [mkExplicitEdit mbContent posMapping imp ""]
+                ]
+            return $ List $ catMaybes commands
+          _ -> return $ List []
+
+        return $ Right $ retRefinedImports <> retRemoveUnusedImports
     | otherwise =
       return $ Right (List [])
 
@@ -132,26 +158,49 @@ codeActionProvider ideState _pId (CodeActionParams _ _ docId range _context)
         then return (Right (List []))
         else do
           mbRefinedImports <- runIde ideState $ use RefineImports nfp
-          let edits =
-                [ e
-                | Just (RefineImportsResult result) <- [mbRefinedImports]
-                , (imp, Just refinedImports) <- result
-                , Just e <- [mkExplicitEdit zeroMapping imp refinedImports]
-                ]
-              caExplicitImports = InR CodeAction {..}
-              _title = "Refine all imports"
-              _kind = Just $ CodeActionUnknown "quickfix.import.refine"
-              _command = Nothing
-              _edit = Just WorkspaceEdit
-                {_changes, _documentChanges, _changeAnnotations}
-              _changes = Just $ HashMap.singleton _uri $ List edits
+          mbRemoveUnusedImports <- runIde ideState $ use RemoveUnusedImports nfp
+          mbContent <- getFileContents ideState nfp
+          let
+              -- common fields
               _documentChanges = Nothing
               _diagnostics = Nothing
               _isPreferred = Nothing
               _disabled = Nothing
               _xdata = Nothing
               _changeAnnotations = Nothing
-          return $ Right $ List [caExplicitImports | not (null edits)]
+              refineImportEdits =
+                [ e
+                | Just (RefineImportsResult result) <- [mbRefinedImports]
+                , (imp, Just refinedImports) <- result
+                , Just e <- [mkExplicitEdit' zeroMapping imp refinedImports]
+                ]
+              caRefineImports =
+                let
+                  _title = "Refine all imports"
+                  _kind = Just $ CodeActionUnknown "quickfix.import.refine"
+                  _command = Nothing
+                  _edit = Just WorkspaceEdit
+                    {_changes, _documentChanges, _changeAnnotations}
+                  _changes = Just $ HashMap.singleton _uri $ List refineImportEdits
+                in InR CodeAction {..}
+              removeUnusedImportEdits =
+                [ e
+                | Just (RemoveUnusedImportsResult result) <- [mbRemoveUnusedImports]
+                , imp <- result
+                , Just (e, _rng) <- [mkExplicitEdit mbContent zeroMapping imp ""]
+                ]
+              caRemoveUnusedImports =
+                let
+                  _title = "Remove all unused imports"
+                  _kind = Just $ CodeActionUnknown "quickfix.import.remove_unused"
+                  _command = Nothing
+                  _edit = Just WorkspaceEdit
+                    {_changes, _documentChanges, _changeAnnotations}
+                  _changes = Just $ HashMap.singleton _uri $ List removeUnusedImportEdits
+                in InR CodeAction {..}
+          return $ Right $ List
+              $ [caRefineImports | not (null refineImportEdits)]
+             <> [caRemoveUnusedImports | not (null removeUnusedImportEdits)]
   | otherwise =
     return $ Right $ List []
 
@@ -166,18 +215,13 @@ instance Binary RefineImports
 type instance RuleResult RefineImports = RefineImportsResult
 
 newtype RefineImportsResult = RefineImportsResult
-  {getMinimalImportsResult :: [(LImportDecl GhcRn, Maybe T.Text)]}
+  {getRefineImportsResult :: [(LImportDecl GhcRn, Maybe T.Text)]}
 
 instance Show RefineImportsResult where show _ = "<refineImportsResult>"
 instance NFData RefineImportsResult where rnf = rwhnf
 
 refineImportsRule :: Rules ()
 refineImportsRule = define $ \RefineImports nfp -> do
-  -- Get the typechecking artifacts from the module
-  tmr <- use TypeCheck nfp
-  -- We also need a GHC session with all the dependencies
-  hsc <- use GhcSessionDeps nfp
-
   -- 2 layer map ModuleName -> ModuleName -> [Avails] (exports)
   import2Map <- do
     -- first layer is from current(editing) module to its imports
@@ -189,11 +233,7 @@ refineImportsRule = define $ \RefineImports nfp -> do
         imp_tmr <- use_ TypeCheck imp_path
         return $ tcg_exports $ tmrTypechecked imp_tmr
 
-  -- Use the GHC api to extract the "minimal" imports
-  -- We shouldn't blindly refine imports
-  -- instead we should generate imports statements
-  -- for modules/symbols actually got used
-  (imports, mbMinImports) <- liftIO $ extractMinimalImports hsc tmr
+  (minImports, _) <- extractMinimalImports nfp
 
   let filterByImport
         :: LImportDecl GhcRn
@@ -235,8 +275,7 @@ refineImportsRule = define $ \RefineImports nfp -> do
                 . Map.toList
                 $ filteredInnerImports)
         -- for every minimal imports
-        | Just minImports <- [mbMinImports]
-        , i@(L _ ImportDecl{ideclName = L _ mn}) <- minImports
+        | i@(L _ ImportDecl{ideclName = L _ mn}) <- minImports
         -- we check for the inner imports
         , Just innerImports <- [Map.lookup mn import2Map]
         -- and only get those symbols used
@@ -244,7 +283,7 @@ refineImportsRule = define $ \RefineImports nfp -> do
         -- if no symbols from this modules then don't need to generate new import
         , not $ null filteredInnerImports
         ]
-  return ([], RefineImportsResult res <$ mbMinImports)
+  return ([], Just $ RefineImportsResult res)
 
   where
     -- Check if a name is exposed by AvailInfo (the available information of a module)
@@ -255,23 +294,114 @@ refineImportsRule = define $ \RefineImports nfp -> do
 
 --------------------------------------------------------------------------------
 
-mkExplicitEdit :: PositionMapping -> LImportDecl pass -> T.Text -> Maybe TextEdit
-mkExplicitEdit posMapping (L src imp) explicit
+data RemoveUnusedImports = RemoveUnusedImports
+  deriving (Show, Generic, Eq, Ord)
+
+instance Hashable RemoveUnusedImports
+instance NFData RemoveUnusedImports
+instance Binary RemoveUnusedImports
+type instance RuleResult RemoveUnusedImports = RemoveUnusedImportsResult
+
+newtype RemoveUnusedImportsResult = RemoveUnusedImportsResult
+  {getRemoveUnusedImportsResult :: [LImportDecl GhcRn]}
+
+instance Show RemoveUnusedImportsResult where show _ = "<removeUnusedImportsResult>"
+instance NFData RemoveUnusedImportsResult where rnf = rwhnf
+
+removeUnusedImportsRule :: Rules ()
+removeUnusedImportsRule = define $ \RemoveUnusedImports nfp -> do
+  (minImports, imports) <- extractMinimalImports nfp
+  let minImportedModules = S.fromList
+        [ mn
+        | L _ ImportDecl{ideclName = L _ mn, ideclHiding} <- minImports
+        , Just (False, L _ names) <- [ideclHiding]
+        , notNull names
+        ]
+
+  let importOnlyForInstances Nothing               = False -- implicit -> import all
+      -- import SomeModule () -- only for instances
+      importOnlyForInstances (Just (_, L _ names)) = null names
+  let importsToRemove =
+        [ i
+        -- for every current imports
+        | i@(L _ ImportDecl{ideclName = L _ mn, ideclHiding}) <- imports
+        -- if it's import only for instances we shouldn't touch it
+        , not $ importOnlyForInstances ideclHiding
+        -- check if it's in min imports
+        , not $ mn `S.member` minImportedModules
+        ]
+  return ([], Just $ RemoveUnusedImportsResult importsToRemove)
+
+--------------------------------------------------------------------------------
+
+extractMinimalImports
+  :: NormalizedFilePath
+  -> Action ([LImportDecl GhcRn], [LImportDecl GhcRn])
+extractMinimalImports nfp = do
+  -- Get the typechecking artifacts from the module
+  tmr <- use TypeCheck nfp
+  -- We also need a GHC session with all the dependencies
+  hsc <- use GhcSessionDeps nfp
+
+  -- Use the GHC api to extract the "minimal" imports
+  -- We shouldn't blindly refine imports
+  -- instead we should generate imports statements
+  -- for modules/symbols actually got used
+  (imports, mbMinImports) <- liftIO $ EI.extractMinimalImports hsc tmr
+
+  return (fromMaybe [] mbMinImports, imports)
+
+mkExplicitEdit' :: PositionMapping -> LImportDecl pass -> T.Text -> Maybe TextEdit
+mkExplicitEdit' pm imp txt = fst <$> mkExplicitEdit Nothing pm imp txt
+
+mkExplicitEdit
+  :: Maybe T.Text
+  -> PositionMapping
+  -> LImportDecl pass
+  -> T.Text
+  -> Maybe (TextEdit, Range) -- Range is the origin range of import
+mkExplicitEdit mbContent posMapping (L src imp) explicit
   | RealSrcSpan l <- src,
     L _ mn <- ideclName imp,
     -- (almost) no one wants to see an refine import list for Prelude
     mn /= moduleName pRELUDE,
     Just rng <- toCurrentRange posMapping $ realSrcSpanToRange l =
-    Just $ TextEdit rng explicit
+      let rng' = case mbContent of
+            Nothing -> rng
+            Just content ->
+              extendToIncludePreviousNewlineIfPossible
+                (indexedByPosition $ T.unpack content)
+                rng
+      in Just (TextEdit rng' explicit, rng)
   | otherwise =
     Nothing
 
+generateLens'
+  :: PluginId
+  -> Uri
+  -> TextEdit
+  -> IO (Maybe CodeLens)
+generateLens' pId uri edits@TextEdit {_range} =
+  generateLens pId uri edits _range
+
 -- | Given an import declaration, generate a code lens unless it has an
 -- explicit import list or it's qualified
-generateLens :: PluginId -> Uri -> TextEdit -> IO (Maybe CodeLens)
-generateLens pId uri edits@TextEdit {_range, _newText} = do
+generateLens
+  :: PluginId
+  -> Uri
+  -> TextEdit
+  -> Range
+  -> IO (Maybe CodeLens)
+generateLens
+  pId
+  uri
+  edits@TextEdit {_range = rng, _newText}
+  lensRange = do
   -- The title of the command is just the minimal explicit import decl
-  let title = "Refine imports to " <> T.intercalate ", " (T.lines _newText)
+  let title =
+        if T.null _newText
+          then "Remove unused import"
+          else "Refine imports to " <> T.intercalate ", " (T.lines _newText)
       -- the code lens has no extra data
       _xdata = Nothing
       -- an edit that replaces the whole declaration with the explicit one
@@ -281,6 +411,7 @@ generateLens pId uri edits@TextEdit {_range, _newText} = do
       _arguments = Just [toJSON $ RefineImportCommandParams edit]
       -- create the command
       _command = Just $ mkLspCommand pId refineImportCommandId title _arguments
+      _range = lensRange
   -- create and return the code lens
   return $ Just CodeLens {..}
 
@@ -289,3 +420,11 @@ generateLens pId uri edits@TextEdit {_range, _newText} = do
 -- | A helper to run ide actions
 runIde :: IdeState -> Action a -> IO a
 runIde = runAction "RefineImports"
+
+getFileContents
+  :: IdeState
+  -> NormalizedFilePath
+  -> IO (Maybe T.Text)
+getFileContents state nfp =
+  (snd . fst =<<)
+    <$> runIde state (useWithStale GetFileContents nfp)

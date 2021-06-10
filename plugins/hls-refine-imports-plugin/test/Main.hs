@@ -19,19 +19,25 @@ main :: IO ()
 main = defaultTestRunner $
   testGroup
     "Refine Imports"
-    [ codeActionGoldenTest "WithOverride" 3 1
+    [ codeActionGoldenTest refineAction "WithOverride" 3 1
+    , codeActionGoldenTest removeUnusedAction "UnusedImport" 3 1
     , codeLensGoldenTest "UsualCase" 1
+    , codeLensGoldenTest "UnusedImportLens" 1
     ]
+
+  where
+    refineAction = "Refine all imports"
+    removeUnusedAction = "Remove all unused imports"
 
 refineImportsPlugin :: PluginDescriptor IdeState
 refineImportsPlugin = RefineImports.descriptor "refineImports"
 
 -- code action tests
 
-codeActionGoldenTest :: FilePath -> Int -> Int -> TestTree
-codeActionGoldenTest fp l c = goldenWithRefineImports fp $ \doc -> do
+codeActionGoldenTest :: Text -> FilePath -> Int -> Int -> TestTree
+codeActionGoldenTest actName fp l c = goldenWithRefineImports fp $ \doc -> do
   actions <- getCodeActions doc (pointRange l c)
-  case find ((== Just "Refine all imports") . caTitle) actions of
+  case find ((== Just actName) . caTitle) actions of
     Just (InR x) -> executeCodeAction x
     _            -> liftIO $ assertFailure "Unable to find CodeAction"
 

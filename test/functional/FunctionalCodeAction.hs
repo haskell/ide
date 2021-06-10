@@ -368,7 +368,8 @@ redundantImportTests = testGroup "redundant import code actions" [
             let Just removeAction = find (\x -> x ^. L.title == "Remove import") allActions
 
             liftIO $ do
-                forM_ allActions $ \a -> a ^. L.kind @?= Just CodeActionQuickFix
+                any (\a -> a ^. L.kind == Just CodeActionQuickFix) allActions
+                    @? "Should have CodeActionQuickFix"
                 forM_ allActions $ \a -> a ^. L.command @?= Nothing
                 forM_ allActions $ \a -> isJust (a ^. L.edit) @? "Has edit"
 

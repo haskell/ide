@@ -5,6 +5,7 @@
 module Development.IDE.Spans.Common (
   showGhc
 , showNameWithoutUniques
+, showSD
 , unqualIEWrapName
 , safeTyThingId
 , safeTyThingType

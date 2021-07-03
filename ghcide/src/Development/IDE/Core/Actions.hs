@@ -88,7 +88,7 @@ getDefinition :: NormalizedFilePath -> Position -> IdeAction (Maybe [Location])
 getDefinition file pos = runMaybeT $ do
     ide <- ask
     opts <- liftIO $ getIdeOptionsIO ide
-    (HAR _ hf _ _ _, mapping) <- useE GetHieAst file
+    (hf, mapping) <- useE GetHieAst file
     (ImportMap imports, _) <- useE GetImportMap file
     !pos' <- MaybeT (pure $ fromCurrentPosition mapping pos)
     hiedb <- lift $ asks hiedb

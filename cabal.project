@@ -34,6 +34,11 @@ source-repository-package
   location: https://github.com/hsyl20/ghc-api-compat
   tag: 8fee87eac97a538dbe81ff1ab18cff10f2f9fa15
 
+source-repository-package
+  type: git
+  location: https://github.com/fendor/hie-bios
+  tag: fe823adfa0e82aa76e098a57cc424c92902e1db8
+
 write-ghc-environment-files: never
 
 index-state: 2021-06-30T16:00:00Z

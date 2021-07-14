@@ -86,6 +86,8 @@ import           HieDb.Create
 import           HieDb.Types
 import           HieDb.Utils
 import           Ide.Types                            (dynFlagsModifyGlobal)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 
 -- | Bump this version number when making changes to the format of the data stored in hiedb
 hiedbDataVersion :: String
@@ -231,7 +233,9 @@ loadSessionWithOptions SessionLoadingOptions{..} dir = do
   filesMap <- newVar HM.empty :: IO (Var FilesMap)
   -- Version of the mappings above
   version <- newVar 0
-  let returnWithVersion fun = IdeGhcSession fun <$> liftIO (readVar version)
+  let returnWithVersion :: (FilePath -> IO (IdeResult HscEnvEq, [FilePath]))
+                  -> Action IdeGhcSession
+      returnWithVersion fun = (IdeGhcSession fun) <$> liftIO (readVar version)
   -- This caches the mapping from Mod.hs -> hie.yaml
   cradleLoc <- liftIO $ memoIO $ \v -> do
       res <- findCradle v
@@ -278,9 +282,9 @@ loadSessionWithOptions SessionLoadingOptions{..} dir = do
     -- If the hieYaml file already has an HscEnv, the new component is
     -- combined with the components in the old HscEnv into a new HscEnv
     -- which contains the union.
-    let packageSetup :: (Maybe FilePath, NormalizedFilePath, ComponentOptions, FilePath)
-                     -> IO (HscEnv, ComponentInfo, [ComponentInfo])
-        packageSetup (hieYaml, cfp, opts, libDir) = do
+    let packageSetup :: (Maybe FilePath, NormalizedFilePath, NonEmpty ComponentOptions, FilePath)
+                     -> IO [(HscEnv, ComponentInfo, [ComponentInfo])]
+        packageSetup (hieYaml, cfp, allOpts, libDir) = concatForM (NE.toList allOpts) $ \opts -> do
           -- Parse DynFlags for the newly discovered component
           hscEnv <- emptyHscEnv ideNc libDir
           (df, targets) <- evalGhcEnv hscEnv $
@@ -291,7 +295,7 @@ loadSessionWithOptions SessionLoadingOptions{..} dir = do
           -- or making a new one. The lookup returns the HscEnv and a list of
           -- information about other components loaded into the HscEnv
           -- (unitId, DynFlag, Targets)
-          modifyVar hscEnvs $ \m -> do
+          r <- modifyVar hscEnvs $ \m -> do
               -- Just deps if there's already an HscEnv
               -- Nothing is it's the first time we are making an HscEnv
               let oldDeps = Map.lookup hieYaml m
@@ -345,12 +349,13 @@ loadSessionWithOptions SessionLoadingOptions{..} dir = do
               -- . The modified information (without -inplace flags) for
               --   existing packages
               pure (Map.insert hieYaml (newHscEnv, new_deps) m, (newHscEnv, head new_deps', tail new_deps'))
+          pure [r]
 
 
-    let session :: (Maybe FilePath, NormalizedFilePath, ComponentOptions, FilePath)
+    let session :: (Maybe FilePath, NormalizedFilePath, NonEmpty ComponentOptions, FilePath)
                 -> IO (IdeResult HscEnvEq,[FilePath])
-        session args@(hieYaml, _cfp, _opts, _libDir) = do
-          (hscEnv, new, old_deps) <- packageSetup args
+        session args@(hieYaml, cfp, _opts, _libDir) = do
+          setupInfos <- packageSetup args -- (hscEnvs, new, old_deps)
 
           -- Whenever we spin up a session on Linux, dynamically load libm.so.6
           -- in. We need this in case the binary is statically linked, in which
@@ -360,58 +365,73 @@ loadSessionWithOptions SessionLoadingOptions{..} dir = do
           -- some code. If the binary is dynamically linked, then this will have
           -- no effect.
           -- See https://github.com/haskell/haskell-language-server/issues/221
-          when (os == "linux") $ do
-            initObjLinker hscEnv
-            res <- loadDLL hscEnv "libm.so.6"
-            case res of
-              Nothing -> pure ()
-              Just err -> hPutStrLn stderr $
-                "Error dynamically loading libm.so.6:\n" <> err
+          forM_ setupInfos $ \(hscEnv, new, old_deps) -> do
+            when (os == "linux") $ do
+              initObjLinker hscEnv
+              res <- loadDLL hscEnv "libm.so.6"
+              case res of
+                Nothing -> pure ()
+                Just err -> hPutStrLn stderr $
+                  "Error dynamically loading libm.so.6:\n" <> err
 
-          -- Make a map from unit-id to DynFlags, this is used when trying to
-          -- resolve imports. (especially PackageImports)
-          let uids = map (\ci -> (componentUnitId ci, componentDynFlags ci)) (new : old_deps)
+            -- Make a map from unit-id to DynFlags, this is used when trying to
+            -- resolve imports. (especially PackageImports)
+            let uids = map (\ci -> (componentUnitId ci, componentDynFlags ci)) (new : old_deps)
 
-          -- For each component, now make a new HscEnvEq which contains the
-          -- HscEnv for the hie.yaml file but the DynFlags for that component
+            -- For each component, now make a new HscEnvEq which contains the
+            -- HscEnv for the hie.yaml file but the DynFlags for that component
 
-          -- New HscEnv for the component in question, returns the new HscEnvEq and
-          -- a mapping from FilePath to the newly created HscEnvEq.
-          let new_cache = newComponentCache logger optExtensions hieYaml _cfp hscEnv uids
-          (cs, res) <- new_cache new
-          -- Modified cache targets for everything else in the hie.yaml file
-          -- which now uses the same EPS and so on
-          cached_targets <- concatMapM (fmap fst . new_cache) old_deps
+            -- New HscEnv for the component in question, returns the new HscEnvEq and
+            -- a mapping from FilePath to the newly created HscEnvEq.
+            let new_cache = newComponentCache logger optExtensions hieYaml cfp hscEnv uids
+            (cs, _res) <- new_cache new
+            -- Modified cache targets for everything else in the hie.yaml file
+            -- which now uses the same EPS and so on
+            cached_targets <- concatMapM (fmap fst . new_cache) old_deps
 
-          let all_targets = cs ++ cached_targets
+            let all_targets = cs ++ cached_targets
 
-          void $ modifyVar' fileToFlags $
-              Map.insert hieYaml (HM.fromList (concatMap toFlagsMap all_targets))
-          void $ modifyVar' filesMap $
-              flip HM.union (HM.fromList (zip (map fst $ concatMap toFlagsMap all_targets) (repeat hieYaml)))
+            void $ modifyVar' fileToFlags $
+                Map.insert hieYaml (HM.fromList (concatMap toFlagsMap all_targets))
+            void $ modifyVar' filesMap $
+                flip HM.union (HM.fromList (zip (map fst $ concatMap toFlagsMap all_targets) (repeat hieYaml)))
 
-          void $ extendKnownTargets all_targets
+            void $ extendKnownTargets all_targets
 
-          -- Invalidate all the existing GhcSession build nodes by restarting the Shake session
-          invalidateShakeCache
-          restartShakeSession []
+            -- Invalidate all the existing GhcSession build nodes by restarting the Shake session
+            invalidateShakeCache
+            restartShakeSession []
 
-          -- Typecheck all files in the project on startup
-          checkProject <- getCheckProject
-          unless (null cs || not checkProject) $ do
-                cfps' <- liftIO $ filterM (IO.doesFileExist . fromNormalizedFilePath) (concatMap targetLocations cs)
-                void $ shakeEnqueue extras $ mkDelayedAction "InitialLoad" Debug $ void $ do
-                    mmt <- uses GetModificationTime cfps'
-                    let cs_exist = catMaybes (zipWith (<$) cfps' mmt)
-                    modIfaces <- uses GetModIface cs_exist
-                    -- update exports map
-                    extras <- getShakeExtras
-                    let !exportsMap' = createExportsMap $ mapMaybe (fmap hirModIface) modIfaces
-                    liftIO $ modifyVar_ (exportsMap extras) $ evaluate . (exportsMap' <>)
+            -- Typecheck all files in the project on startup
+            checkProject <- getCheckProject
+            unless (null cs || not checkProject) $ do
+                  cfps' <- liftIO $ filterM (IO.doesFileExist . fromNormalizedFilePath) (concatMap targetLocations cs)
+                  void $ shakeEnqueue extras $ mkDelayedAction "InitialLoad" Debug $ void $ do
+                      mmt <- uses GetModificationTime cfps'
+                      let cs_exist = catMaybes (zipWith (<$) cfps' mmt)
+                      modIfaces <- uses GetModIface cs_exist
+                      -- update exports map
+                      extras <- getShakeExtras
+                      let !exportsMap' = createExportsMap $ mapMaybe (fmap hirModIface) modIfaces
+                      liftIO $ modifyVar_ (exportsMap extras) $ evaluate . (exportsMap' <>)
 
-          return (second Map.keys res)
+          yamlMap <- readVar fileToFlags
+          let (hscEnvEq, depInfo) = (yamlMap Map.! hieYaml) HM.! cfp
+          pure (hscEnvEq, Map.keys depInfo)
 
-    let consultCradle :: Maybe FilePath -> FilePath -> IO (IdeResult HscEnvEq, [FilePath])
+            -- Let's be insanely hacky!
+            -- Go through all new components and find the one that the given fp most likely
+            -- belongs to.
+            -- Since all ComponentInfo's carry a proof for which file caused their creation,
+            -- and add this file to their targets, we need to do some post-processing.
+            -- It is an implementation detail that the first known target is the normalized
+            -- filepath of the proof file.
+            -- Let's strip it away and let's see whether the targets still contain 'cfp'!
+            -- If they do, it must be the home component of cfp.
+            -- If we find it, remove it as a target from all other 'HscEnvEq' to avoid recompilation
+            -- issues.
+
+    let consultCradle :: Maybe FilePath -> FilePath -> IO (IdeResult HscEnvEq,[FilePath])
         consultCradle hieYaml cfp = do
            lfp <- flip makeRelative cfp <$> getCurrentDirectory
            logInfo logger $ T.pack ("Consulting the cradle for " <> show lfp)
@@ -443,7 +463,7 @@ loadSessionWithOptions SessionLoadingOptions{..} dir = do
                  InstallationMismatch{..} ->
                      return (([renderPackageSetupException cfp GhcVersionMismatch{..}], Nothing),[])
                  InstallationChecked _compileTime _ghcLibCheck ->
-                   session (hieYaml, toNormalizedFilePath' cfp, opts, libDir)
+                     session (hieYaml, toNormalizedFilePath' cfp, opts, libDir)
              -- Failure case, either a cradle error or the none cradle
              Left err -> do
                dep_info <- getDependencyInfo (maybeToList hieYaml)
@@ -500,7 +520,7 @@ loadSessionWithOptions SessionLoadingOptions{..} dir = do
 -- GHC options/dynflags needed for the session and the GHC library directory
 
 cradleToOptsAndLibDir :: Show a => Cradle a -> FilePath
-                      -> IO (Either [CradleError] (ComponentOptions, FilePath))
+                      -> IO (Either [CradleError] (NonEmpty ComponentOptions, FilePath))
 cradleToOptsAndLibDir cradle file = do
     -- Start off by getting the session options
     let showLine s = hPutStrLn stderr ("> " ++ s)
@@ -577,7 +597,7 @@ newComponentCache
          -> [(InstalledUnitId, DynFlags)]
          -> ComponentInfo
          -> IO ( [TargetDetails], (IdeResult HscEnvEq, DependencyInfo))
-newComponentCache logger exts cradlePath cfp hsc_env uids ci = do
+newComponentCache logger exts cradlePath _cfp hsc_env uids ci = do
     let df = componentDynFlags ci
     let hscEnv' = hsc_env { hsc_dflags = df
                           , hsc_IC = (hsc_IC hsc_env) { ic_dflags = df } }
@@ -597,8 +617,9 @@ newComponentCache logger exts cradlePath cfp hsc_env uids ci = do
     -- the component, in which case things will be horribly broken anyway.
     -- Otherwise, we will immediately attempt to reload this module which
     -- causes an infinite loop and high CPU usage.
-    let special_target = TargetDetails (TargetFile cfp) targetEnv targetDepends [componentFP ci]
-    return (special_target:ctargets, res)
+    -- let special_target = TargetDetails (TargetFile cfp) targetEnv targetDepends [componentFP ci]
+    -- return (special_target:ctargets, res)
+    return (ctargets, res)
 
 {- Note [Avoiding bad interface files]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

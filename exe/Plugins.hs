@@ -13,6 +13,10 @@ import           Ide.Plugin.Example2               as Example2
 
 -- haskell-language-server optional plugins
 
+#if callHierarchy
+import           Ide.Plugin.CallHierarchy          as CallHierarchy
+#endif
+
 #if class
 import           Ide.Plugin.Class                  as Class
 #endif
@@ -116,6 +120,9 @@ idePlugins includeExamples = pluginDescToIdePlugins allPlugins
 #endif
 #if brittany
       Brittany.descriptor "brittany" :
+#endif
+#if callHierarchy
+      CallHierarchy.descriptor "callHierarchy":
 #endif
 #if class
       Class.descriptor "class" :

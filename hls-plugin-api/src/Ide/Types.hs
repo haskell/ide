@@ -255,6 +255,15 @@ instance PluginMethod TextDocumentRangeFormatting where
   pluginEnabled _ pid conf = (PluginId $ formattingProvider conf) == pid
   combineResponses _ _ _ _ (x :| _) = x
 
+instance PluginMethod TextDocumentPrepareCallHierarchy where
+  pluginEnabled _ = pluginEnabledConfig plcCallHierarchyOn
+
+instance PluginMethod CallHierarchyIncomingCalls where
+  pluginEnabled _ = pluginEnabledConfig plcCallHierarchyOn
+
+instance PluginMethod CallHierarchyOutgoingCalls where
+  pluginEnabled _ = pluginEnabledConfig plcCallHierarchyOn
+
 -- ---------------------------------------------------------------------
 
 -- | Methods which have a PluginMethod instance
@@ -452,6 +461,8 @@ instance HasTracing InitializeParams
 instance HasTracing (Maybe InitializedParams)
 instance HasTracing WorkspaceSymbolParams where
   traceWithSpan sp (WorkspaceSymbolParams _ _ query) = setTag sp "query" (encodeUtf8 query)
+instance HasTracing CallHierarchyIncomingCallsParams
+instance HasTracing CallHierarchyOutgoingCallsParams
 
 -- ---------------------------------------------------------------------
 

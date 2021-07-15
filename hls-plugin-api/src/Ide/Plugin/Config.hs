@@ -121,54 +121,58 @@ instance A.ToJSON Config where
 -- This provides a regular naming scheme for all plugin config.
 data PluginConfig =
     PluginConfig
-      { plcGlobalOn      :: !Bool
-      , plcCodeActionsOn :: !Bool
-      , plcCodeLensOn    :: !Bool
-      , plcDiagnosticsOn :: !Bool
-      , plcHoverOn       :: !Bool
-      , plcSymbolsOn     :: !Bool
-      , plcCompletionOn  :: !Bool
-      , plcRenameOn      :: !Bool
-      , plcConfig        :: !A.Object
+      { plcGlobalOn        :: !Bool
+      , plcCallHierarchyOn :: !Bool
+      , plcCodeActionsOn   :: !Bool
+      , plcCodeLensOn      :: !Bool
+      , plcDiagnosticsOn   :: !Bool
+      , plcHoverOn         :: !Bool
+      , plcSymbolsOn       :: !Bool
+      , plcCompletionOn    :: !Bool
+      , plcRenameOn        :: !Bool
+      , plcConfig          :: !A.Object
       } deriving (Show,Eq)
 
 instance Default PluginConfig where
   def = PluginConfig
-      { plcGlobalOn      = True
-      , plcCodeActionsOn = True
-      , plcCodeLensOn    = True
-      , plcDiagnosticsOn = True
-      , plcHoverOn       = True
-      , plcSymbolsOn     = True
-      , plcCompletionOn  = True
-      , plcRenameOn      = True
-      , plcConfig        = mempty
+      { plcGlobalOn        = True
+      , plcCallHierarchyOn = True
+      , plcCodeActionsOn   = True
+      , plcCodeLensOn      = True
+      , plcDiagnosticsOn   = True
+      , plcHoverOn         = True
+      , plcSymbolsOn       = True
+      , plcCompletionOn    = True
+      , plcRenameOn        = True
+      , plcConfig          = mempty
       }
 
 instance A.ToJSON PluginConfig where
-    toJSON (PluginConfig g ca cl d h s c rn cfg) = r
+    toJSON (PluginConfig g ch ca cl d h s c rn cfg) = r
       where
-        r = object [ "globalOn"      .= g
-                   , "codeActionsOn" .= ca
-                   , "codeLensOn"    .= cl
-                   , "diagnosticsOn" .= d
-                   , "hoverOn"       .= h
-                   , "symbolsOn"     .= s
-                   , "completionOn"  .= c
-                   , "renameOn"      .= rn
-                   , "config"        .= cfg
+        r = object [ "globalOn"        .= g
+                   , "callHierarchyOn" .= ch
+                   , "codeActionsOn"   .= ca
+                   , "codeLensOn"      .= cl
+                   , "diagnosticsOn"   .= d
+                   , "hoverOn"         .= h
+                   , "symbolsOn"       .= s
+                   , "completionOn"    .= c
+                   , "renameOn"        .= rn
+                   , "config"          .= cfg
                    ]
 
 instance A.FromJSON PluginConfig where
   parseJSON = A.withObject "PluginConfig" $ \o  -> PluginConfig
-      <$> o .:? "globalOn"      .!= plcGlobalOn def
-      <*> o .:? "codeActionsOn" .!= plcCodeActionsOn def
-      <*> o .:? "codeLensOn"    .!= plcCodeLensOn    def
-      <*> o .:? "diagnosticsOn" .!= plcDiagnosticsOn def -- AZ
-      <*> o .:? "hoverOn"       .!= plcHoverOn       def
-      <*> o .:? "symbolsOn"     .!= plcSymbolsOn     def
-      <*> o .:? "completionOn"  .!= plcCompletionOn  def
-      <*> o .:? "renameOn"      .!= plcRenameOn      def
-      <*> o .:? "config"        .!= plcConfig        def
+      <$> o .:? "globalOn"        .!= plcGlobalOn def
+      <*> o .:? "callHierarchyOn" .!= plcCallHierarchyOn def
+      <*> o .:? "codeActionsOn"   .!= plcCodeActionsOn def
+      <*> o .:? "codeLensOn"      .!= plcCodeLensOn    def
+      <*> o .:? "diagnosticsOn"   .!= plcDiagnosticsOn def -- AZ
+      <*> o .:? "hoverOn"         .!= plcHoverOn       def
+      <*> o .:? "symbolsOn"       .!= plcSymbolsOn     def
+      <*> o .:? "completionOn"    .!= plcCompletionOn  def
+      <*> o .:? "renameOn"        .!= plcRenameOn      def
+      <*> o .:? "config"          .!= plcConfig        def
 
 -- ---------------------------------------------------------------------

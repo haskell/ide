@@ -196,6 +196,7 @@ initializeResponseTests = withResource acquire release tests where
     , chk "NO folding range"          _foldingRangeProvider (Just $ InL False)
     , che "   execute command"      _executeCommandProvider [extendImportCommandId, typeLensCommandId, blockCommandId]
     , chk "   workspace"                         _workspace (Just $ WorkspaceServerCapabilities (Just WorkspaceFoldersServerCapabilities{_supported = Just True, _changeNotifications = Just ( InR True )}))
+    , chk "   call hierarchy"        _callHierarchyProvider (Just $ InL True)
     , chk "NO experimental"                   _experimental Nothing
     ] where
 

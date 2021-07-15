@@ -8,6 +8,7 @@ packages:
   - ./shake-bench
   - ./hls-plugin-api
   - ./hls-test-utils
+  - ./plugins/hls-call-hierarchy-plugin
   - ./plugins/hls-class-plugin
   - ./plugins/hls-haddock-comments-plugin
   - ./plugins/hls-eval-plugin

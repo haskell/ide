@@ -22,6 +22,7 @@ packages:
          ./plugins/hls-pragmas-plugin
          ./plugins/hls-module-name-plugin
          ./plugins/hls-ormolu-plugin
+         ./plugins/hls-call-hierarchy-plugin
 tests: true
 
 package *
@@ -84,3 +85,20 @@ allow-newer:
     these:base,
     time-compat:base
 
+source-repository-package
+  type: git
+  location: https://github.com/July541/lsp.git
+  tag: ef59c28b41ed4c5775f0ab0c1e985839359cec96
+  subdir: lsp-types
+
+source-repository-package
+  type: git
+  location: https://github.com/July541/lsp.git
+  tag: ef59c28b41ed4c5775f0ab0c1e985839359cec96
+  subdir: lsp-test
+
+source-repository-package
+  type: git
+  location: https://github.com/July541/lsp.git
+  tag: ef59c28b41ed4c5775f0ab0c1e985839359cec96
+  subdir: lsp

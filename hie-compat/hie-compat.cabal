@@ -46,4 +46,7 @@ library
     hs-source-dirs: src-ghc810 src-reexport
   if (impl(ghc >= 9.0) && impl(ghc < 9.1) || flag(ghc-lib))
     hs-source-dirs: src-ghc901
+  if (impl(ghc >= 9.2) && impl(ghc < 9.3))
+    hs-source-dirs: src-ghc902
+
 

@@ -245,7 +245,7 @@ mkHiFileResultNoCompile session tcm = do
 #else
   (iface, _) <- mkIfaceTc hsc_env_tmp Nothing sf details tcGblEnv
 #endif
-  let mod_info = HomeModInfo iface details Nothing
+  mod_info <- mkDetailsFromIface session iface Nothing
   pure $! mkHiFileResult ms mod_info
 
 mkHiFileResultCompile
@@ -283,7 +283,9 @@ mkHiFileResultCompile session' tcm simplified_guts ltype = catchErrs $ do
 #else
   (final_iface,_) <- mkIface session Nothing details simplified_guts
 #endif
-  let mod_info = HomeModInfo final_iface details linkable
+  -- ignore the 'details' from 'tidyProgram', Matthew claims they leak memory
+  -- instead, regenerate them using 'mkDetailsFromIface'
+  mod_info <- mkDetailsFromIface session final_iface linkable
   pure (diags, Just $! mkHiFileResult ms mod_info)
 
   where

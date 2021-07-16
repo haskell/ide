@@ -3,6 +3,7 @@ cradle:
     arguments:
     - UsualCase.hs
     - WithOverride.hs
+    - DontUseInternal.hs
     - A.hs
     - B.hs
     - C.hs
@@ -10,3 +11,5 @@ cradle:
     - E.hs
     - F.hs
     - G.hs
+    - H.hs
+    - H/Internal.hs

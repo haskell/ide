@@ -21,6 +21,7 @@ main = defaultTestRunner $
     "Refine Imports"
     [ codeActionGoldenTest "WithOverride" 3 1
     , codeLensGoldenTest "UsualCase" 1
+    , codeLensGoldenTest "DontUseInternal" 1
     ]
 
 refineImportsPlugin :: PluginDescriptor IdeState

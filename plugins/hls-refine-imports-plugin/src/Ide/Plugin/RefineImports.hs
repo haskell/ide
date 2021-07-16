@@ -19,7 +19,7 @@ import           Control.Monad.IO.Class               (liftIO)
 import           Data.Aeson.Types
 import qualified Data.HashMap.Strict                  as HashMap
 import           Data.IORef                           (readIORef)
-import           Data.List                            (intercalate)
+import           Data.List                            (intercalate, isSuffixOf)
 import qualified Data.Map.Strict                      as Map
 import           Data.Maybe                           (catMaybes, fromMaybe)
 import qualified Data.Set                             as S
@@ -195,13 +195,20 @@ refineImportsRule = define $ \RefineImports nfp -> do
   -- for modules/symbols actually got used
   (imports, mbMinImports) <- liftIO $ extractMinimalImports hsc tmr
 
+  -- Internal module is the convention that no module should import
+  -- directly
+  let notContainInternalModule :: [AvailInfo] -> Bool
+      notContainInternalModule = not . any (\a ->
+        "Internal" `isSuffixOf` prettyPrint (availName a))
+
   let filterByImport
         :: LImportDecl GhcRn
         -> Map.Map ModuleName [AvailInfo]
         -> Maybe (Map.Map ModuleName [AvailInfo])
       filterByImport (L _ ImportDecl{ideclHiding = Just (_, L _ names)}) avails =
         let importedNames = S.fromList $ map (ieName . unLoc) names
-            res = flip Map.filter avails $ \a ->
+            availsExcludingInternal = Map.filter notContainInternalModule avails
+            res = flip Map.filter availsExcludingInternal $ \a ->
                     any (`S.member` importedNames)
                       $ concatMap availNamesWithSelectors a
             allFilteredAvailsNames = S.fromList

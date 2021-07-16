@@ -578,7 +578,7 @@ getCompletions plId ideOpts CC {allModNamesAsNS, unqualCompls, qualCompls, impor
       filtListWithSnippet f list suffix =
         [ toggleSnippets caps config (f label (snippet <> suffix))
         | (snippet, label) <- list
-        , Fuzzy.test fullPrefix label
+        , Fuzzy.test (T.toUpper fullPrefix) label
         ]
 
       filtImportCompls = filtListWith (mkImportCompl enteredQual) importableModules

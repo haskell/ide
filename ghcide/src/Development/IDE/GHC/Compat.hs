@@ -188,6 +188,7 @@ import           Data.List              (foldl')
 import           Data.List              (foldl', isSuffixOf)
 #endif
 
+import           Control.Applicative    ((<|>))
 import qualified Data.Map               as M
 import           DynamicLoading
 import           Plugins                (Plugin (parsedResultAction),
@@ -305,9 +306,9 @@ setUpTypedHoles df
   $ flip gopt_unset Opt_SortValidHoleFits
   $ flip gopt_unset Opt_UnclutterValidHoleFits
   $ df
-  { refLevelHoleFits = Just 1   -- becomes slow at higher levels
-  , maxRefHoleFits   = Just 10  -- quantity does not impact speed
-  , maxValidHoleFits = Nothing  -- quantity does not impact speed
+  { refLevelHoleFits = refLevelHoleFits df <|> Just 1   -- becomes slow at higher levels
+  , maxRefHoleFits   = maxRefHoleFits df <|> Just 10  -- quantity does not impact speed
+  , maxValidHoleFits = maxValidHoleFits df <|> Just 10  -- quantity does not impact speed
   }
 
 

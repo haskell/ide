@@ -34,6 +34,17 @@ fill hole" code action, *et voila!*
 [hls]: https://github.com/haskell/haskell-language-server/releases
 
 
+## Usage
+
+When enabled, Wingman for Haskell will remove HLS support for hole-fit code
+actions. These code actions are provided by GHC and make typechecking extremely
+slow in the presence of typed holes. Because Wingman relies so heavily on typed
+holes, these features are in great tension.
+
+The solution: we just remove the hole-fit actions. If you'd prefer to use these
+actions, you can get them back by compiling HLS without the Wingman plugin.
+
+
 ## Editor Configuration
 
 ### Enabling Jump to Hole
